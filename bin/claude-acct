@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# claude-acct: switch Claude Code between your own saved logins.
+set -euo pipefail
+
+src=${BASH_SOURCE[0]}
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case $src in /*) ;; *) src=$dir/$src ;; esac
+done
+CA_APP=$(cd -P "$(dirname "$src")/.." && pwd)
+for f in "$CA_APP"/lib/*.sh; do
+  # shellcheck source=/dev/null
+  . "$f"
+done
+
+command -v jq >/dev/null 2>&1 || ca_die "jq is required (macOS 15+ includes it; on Linux install the jq package)"
+
+usage() {
+  cat <<'USAGE'
+Usage: claude-acct <command>
+
+  save [--label LABEL]      save the account Claude Code is logged in as
+  use <account>             switch Claude Code to a saved account (id, label or email)
+  list                      show saved accounts (* = active)
+  rename <account> <label>  change the label shown in the status line
+  rm <account>              forget a saved account
+  restore                   undo the last switch
+  refresh [account ...]     ask Anthropic for the current limits of each account
+  doctor                    check the setup
+  uninstall [--purge]       remove claude-acct (--purge also deletes saved accounts)
+  version
+
+In Claude Code with fullscreen rendering, click an account in the status line to switch.
+USAGE
+}
+
+cmd=${1:-help}
+[ $# -eq 0 ] || shift
+case "$cmd" in
+  save) ca_cmd_save "$@" ;;
+  use) ca_cmd_use "$@" ;;
+  list | ls) ca_cmd_list ;;
+  rename) ca_cmd_rename "$@" ;;
+  rm | remove) ca_cmd_rm "$@" ;;
+  restore) ca_cmd_restore ;;
+  refresh) ca_cmd_refresh "$@" ;;
+  doctor) ca_cmd_doctor ;;
+  statusline) ca_cmd_statusline 2>/dev/null || true ;;
+  open-url) ca_cmd_open_url "$@" ;;
+  uninstall) ca_uninstall "$@" ;;
+  version | --version | -v) cat "$CA_APP/VERSION" ;;
+  help | --help | -h) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

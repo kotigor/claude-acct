@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Test double: records the call and exits with $FAKE_OPEN_EXIT (default 0).
+printf '%s %s\n' "$(basename "$0")" "$*" >>"${FAKE_LOG:-/dev/null}"
+exit "${FAKE_OPEN_EXIT:-0}"

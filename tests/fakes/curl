@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Fake curl for the usage endpoint. claude-acct passes the url and headers as a
+# config on stdin (curl -K -) so the token stays out of the process list, so this
+# reads them from there. Answers from $FAKE_CURL_DIR/<bearer token>.json (body)
+# and .code (status, default 200); an unknown token gets 401.
+# FAKE_CURL_SLEEP delays the reply, to exercise timeouts and parallelism.
+set -euo pipefail
+
+config=""
+case " $* " in *" -K - "* | *" --config - "*) config=$(cat) ;; esac
+
+token=$(printf '%s\n' "$config" | sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p')
+url=$(printf '%s\n' "$config" | sed -n 's/^url = "\(.*\)"$/\1/p')
+
+# argv is logged separately from the token, so a test can prove the token is not in it.
+printf 'curl argv=%s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
+printf 'curl url=%s token=%s\n' "$url" "$token" >>"${FAKE_LOG:-/dev/null}"
+
+[ -z "${FAKE_CURL_SLEEP:-}" ] || sleep "$FAKE_CURL_SLEEP"
+
+dir=${FAKE_CURL_DIR:-/nonexistent}
+if [ -n "$token" ] && [ -f "$dir/$token.json" ]; then
+  cat "$dir/$token.json"
+  printf '\n%s\n' "$(cat "$dir/$token.code" 2>/dev/null || echo 200)"
+else
+  printf '{"error":{"type":"authentication_error","message":"invalid bearer token"}}\n401\n'
+fi

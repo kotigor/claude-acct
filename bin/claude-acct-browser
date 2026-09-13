@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Claude Code opens links with "$BROWSER <url>"; claude-acct handles its own and passes the rest on.
+src=${BASH_SOURCE[0]}
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case $src in /*) ;; *) src=$dir/$src ;; esac
+done
+exec "$(cd -P "$(dirname "$src")" && pwd)/claude-acct" open-url "$@"

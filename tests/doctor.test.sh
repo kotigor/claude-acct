@@ -1,0 +1,58 @@
+# shellcheck shell=bash
+
+healthy_setup() {
+  "$ROOT/install.sh" >/dev/null
+  cc_login alice
+  ca save >/dev/null
+  jq '.tui = "fullscreen"' "$HOME/.claude/settings.json" >"$T/s" && mv "$T/s" "$HOME/.claude/settings.json"
+}
+
+test_doctor_reports_a_healthy_setup() {
+  healthy_setup
+  local out
+  out=$(TERM_PROGRAM=WarpTerminal ca doctor)
+  assert_contains "$out" "ok    credentials:"
+  assert_contains "$out" "ok    active account is saved: alice@example.com"
+  assert_contains "$out" "ok    status line installed"
+  assert_contains "$out" "ok    link handler installed"
+  assert_contains "$out" "ok    fullscreen rendering is on"
+  assert_contains "$out" "ok    terminal WarpTerminal: plain click"
+  assert_not_contains "$out" "FAIL"
+}
+
+test_doctor_fails_without_install() {
+  cc_login alice
+  local rc=0 out
+  out=$(ca doctor) || rc=$?
+  assert_eq "$rc" 1
+  assert_contains "$out" "FAIL  status line not installed"
+}
+
+test_doctor_warns_about_overrides_and_unsaved_account() {
+  "$ROOT/install.sh" >/dev/null
+  cc_login alice
+  local out
+  out=$(ANTHROPIC_API_KEY=x ca doctor || true)
+  assert_contains "$out" "ANTHROPIC_API_KEY"
+  assert_contains "$out" "active account is not saved"
+}
+
+test_doctor_flags_unexpected_credentials() {
+  "$ROOT/install.sh" >/dev/null
+  cc_login alice
+  cc_store_get | jq -c '.claudeAiOauth = "weird"' | cc_store_put
+  assert_contains "$(ca doctor || true)" "FAIL  credentials"
+}
+
+test_doctor_warns_about_a_project_status_line() {
+  healthy_setup
+  mkdir -p .claude
+  printf '{"statusLine":{"type":"command","command":"echo"}}' >.claude/settings.json
+  assert_contains "$(ca doctor || true)" "sets its own statusLine"
+}
+
+test_doctor_does_not_mistake_user_settings_for_project_settings() {
+  healthy_setup
+  cd "$HOME" || return 1
+  assert_not_contains "$(ca doctor || true)" "sets its own statusLine"
+}

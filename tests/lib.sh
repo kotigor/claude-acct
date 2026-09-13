@@ -20,6 +20,7 @@ t_setup() {
     CLAUDE_CODE_NO_FLICKER TERM_PROGRAM DISPLAY WAYLAND_DISPLAY
   # Deterministic rendering unless a test asks otherwise.
   export COLUMNS=200 NO_COLOR=1 CLAUDE_ACCT_AUTO_REFRESH=0 CA_USAGE_SYNC=1
+  export TERM=xterm-256color  # CI runners and containers say "dumb", which rightly disables colour
   cd "$T/work"
   trap 'rm -rf "$T"' EXIT
 }

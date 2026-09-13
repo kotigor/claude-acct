@@ -15,7 +15,9 @@ test_poke_always_changes_the_command_and_never_repeats_a_value() {
   assert_contains "$a" "$base --tick "
   # every poke is a new value, so two pokes in quick succession can never add up
   # to "no change" for Claude Code's content-comparing settings watcher
-  [ "$a" != "$b" ] && [ "$b" != "$c" ] && [ "$a" != "$c" ] || fail "pokes repeated a value: $a / $b / $c"
+  if [ "$a" = "$b" ] || [ "$b" = "$c" ] || [ "$a" = "$c" ]; then
+    fail "pokes repeated a value: $a / $b / $c"
+  fi
   assert_eq "$(printf '%s' "$c" | grep -c -- '--tick')" "1"
 }
 
@@ -88,7 +90,7 @@ test_doctor_accepts_a_ticked_command() {
   assert_contains "$(ca doctor || true)" "ok    status line installed"
 }
 
-mtime() { stat -f %Fm "$1" 2>/dev/null || stat -c %.9Y "$1"; }
+mtime() { stat -c %.9Y "$1" 2>/dev/null || stat -f %Fm "$1"; }
 
 test_a_switch_pokes_before_touching_the_credentials() {
   install_it

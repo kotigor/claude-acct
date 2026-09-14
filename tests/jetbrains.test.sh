@@ -98,26 +98,27 @@ test_a_handler_path_with_special_characters_is_escaped_in_the_xml() {
   assert_eq "$(state_json | jq -r '.jetbrains | to_entries[0].value.browserPath')" "null"
 }
 
-classic_xml() {
-  printf '<application>\n  <component name="TerminalOptionsProvider">\n    <option name="terminalEngine" value="CLASSIC" />\n  </component>\n</application>\n'
+# What the reworked engine's shell integration leaves in a zsh tab.
+reworked_zsh_env() {
+  env TERMINAL_EMULATOR=JetBrains-JediTerm FIG_TERM=1 PROCESS_LAUNCHED_BY_CW=1 PROCESS_LAUNCHED_BY_Q=1 "$@"
 }
 
 test_the_status_line_warns_on_the_reworked_jetbrains_engine() {
   cc_login alice
   ca save >/dev/null
   local out
-  out=$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm ca statusline)
+  out=$(printf '{}' | reworked_zsh_env "$ROOT/bin/claude-acct" statusline)
   assert_contains "$out" "Ctrl+click"
   assert_contains "$out" "$(esc_ch)]8;;http://claude-acct.localhost/hint/jetbrains/off$(bel_ch)✕ hide"
-  assert_contains "$(printf '{}' | COLUMNS=80 TERMINAL_EMULATOR=JetBrains-JediTerm ca statusline)" "⚠ links here need Ctrl+click"
+  assert_contains "$(printf '{}' | COLUMNS=80 reworked_zsh_env "$ROOT/bin/claude-acct" statusline)" "⚠ links here need Ctrl+click"
+  # bash and fish keep the engine's own marker
+  assert_contains "$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm INTELLIJ_TERMINAL_COMMAND_BLOCKS_REWORKED=1 ca statusline)" "Ctrl+click"
   # not in other terminals
   assert_not_contains "$(printf '{}' | ca statusline)" "Ctrl+click"
-  # nor once an IDE here is set to the classic engine ...
-  jb_ide PhpStorm2025.3
-  classic_xml >"$(jb_root)/PhpStorm2025.3/options/terminal.xml"
+  # nor in a classic tab, whatever the IDE's setting (the Claude Code plugin's tab is always classic)
   assert_not_contains "$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm ca statusline)" "Ctrl+click"
-  # ... unless the shell still carries the engine s own marker (bash and fish keep it)
-  assert_contains "$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm INTELLIJ_TERMINAL_COMMAND_BLOCKS_REWORKED=1 ca statusline)" "Ctrl+click"
+  # Amazon Q's own variables alone do not make a tab reworked
+  assert_not_contains "$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm FIG_TERM=1 ca statusline)" "Ctrl+click"
 }
 
 test_the_engine_hint_can_be_hidden_for_good() {
@@ -125,6 +126,6 @@ test_the_engine_hint_can_be_hidden_for_good() {
   ca save >/dev/null
   ca open-url http://claude-acct.localhost/hint/jetbrains/off
   assert_eq "$(jq -r .hints.jetbrains "$XDG_DATA_HOME/claude-acct/ui.json")" "false"
-  assert_not_contains "$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm ca statusline)" "Ctrl+click"
-  assert_contains "$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm ca statusline)" "alice@example.com"
+  assert_not_contains "$(printf '{}' | reworked_zsh_env "$ROOT/bin/claude-acct" statusline)" "Ctrl+click"
+  assert_contains "$(printf '{}' | reworked_zsh_env "$ROOT/bin/claude-acct" statusline)" "alice@example.com"
 }

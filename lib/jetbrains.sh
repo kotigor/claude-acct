@@ -131,19 +131,18 @@ EOR
 # terminal. Only the classic engine understands OSC 8 links (a plain click, or
 # Cmd+click through the browser setting); the reworked one leaves clicks to
 # Claude Code, which wants Ctrl, and on macOS Ctrl+click also opens the context
-# menu. The engine marks its shell environment, but zsh drops that marker before
-# child processes see it, so the IDE's setting is read as well: any IDE on this
-# machine set to the classic engine counts. (The Claude Code plugin's own tab runs
-# the classic engine whatever the setting says; there the hint can be hidden.)
+# menu. The answer comes from the tab itself, not from the IDE's setting: with
+# its shell integration the reworked engine exports its own marker together with
+# FIG_TERM, PROCESS_LAUNCHED_BY_CW and PROCESS_LAUNCHED_BY_Q (to keep Amazon Q's
+# completions out). zsh drops the marker before child processes start, the other
+# three reach Claude Code. A classic tab, the Claude Code plugin's own included,
+# has none of them.
 ca_jetbrains_engine() {
-  local f
   [ "${TERMINAL_EMULATOR:-}" = JetBrains-JediTerm ] || return 0
-  if [ -n "${INTELLIJ_TERMINAL_COMMAND_BLOCKS_REWORKED:-}${INTELLIJ_TERMINAL_COMMAND_BLOCKS:-}" ]; then printf reworked; return 0; fi
-  while IFS= read -r f; do
-    if [ -z "$f" ] || [ ! -f "$f" ]; then continue; fi
-    if grep -q 'name="terminalEngine" value="CLASSIC"' "$f" 2>/dev/null; then printf classic; return 0; fi
-  done <<EOR
-$(ca_jetbrains_files | sed 's|ide\.general\.local\.xml$|terminal.xml|')
-EOR
-  printf reworked
+  if [ -n "${INTELLIJ_TERMINAL_COMMAND_BLOCKS_REWORKED:-}${INTELLIJ_TERMINAL_COMMAND_BLOCKS:-}" ] ||
+    { [ "${PROCESS_LAUNCHED_BY_Q:-}" = 1 ] && [ "${PROCESS_LAUNCHED_BY_CW:-}" = 1 ]; }; then
+    printf reworked
+  else
+    printf classic
+  fi
 }

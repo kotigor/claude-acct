@@ -133,13 +133,12 @@ EOR
 # Claude Code, which wants Ctrl, and on macOS Ctrl+click also opens the context
 # menu. The engine marks its shell environment, but zsh drops that marker before
 # child processes see it, so the IDE's setting is read as well: any IDE on this
-# machine set to the classic engine counts. The Claude Code plugin's own tab is
-# classic whatever the setting says.
+# machine set to the classic engine counts. (The Claude Code plugin's own tab runs
+# the classic engine whatever the setting says; there the hint can be hidden.)
 ca_jetbrains_engine() {
   local f
   [ "${TERMINAL_EMULATOR:-}" = JetBrains-JediTerm ] || return 0
   if [ -n "${INTELLIJ_TERMINAL_COMMAND_BLOCKS_REWORKED:-}${INTELLIJ_TERMINAL_COMMAND_BLOCKS:-}" ]; then printf reworked; return 0; fi
-  if [ -n "${ENABLE_IDE_INTEGRATION:-}${CLAUDE_CODE_SSE_PORT:-}" ]; then printf classic; return 0; fi
   while IFS= read -r f; do
     if [ -z "$f" ] || [ ! -f "$f" ]; then continue; fi
     if grep -q 'name="terminalEngine" value="CLASSIC"' "$f" 2>/dev/null; then printf classic; return 0; fi

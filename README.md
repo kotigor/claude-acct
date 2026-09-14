@@ -69,7 +69,7 @@ The terminal in PhpStorm, IntelliJ IDEA and the other JetBrains IDEs also opens 
 
 `./install.sh --no-jetbrains` skips this; `claude-acct jetbrains-setup` does it later (for an IDE installed afterwards, say); `claude-acct uninstall` puts the previous setting back. Run `claude-acct doctor` from the IDE's terminal to check.
 
-JetBrains ships two terminal engines (Settings > Tools > Terminal > Terminal engine). The classic one understands OSC 8 links: a click goes through the browser setting above, and links underline under the mouse. The reworked one does not, so there the click reaches Claude Code itself, which opens links on Ctrl+click; on macOS Ctrl+click is also the system right-click, so the terminal's context menu opens along with it. On the reworked engine the status line says so in a third row, with a `✕ hide` link for those who prefer to stay. The Claude Code plugin's own terminal tab uses the classic engine.
+JetBrains ships two terminal engines (Settings > Tools > Terminal > Terminal engine). The classic one understands OSC 8 links: a click goes through the browser setting above, and links underline under the mouse. The reworked one does not, so there the click reaches Claude Code itself, which opens links on Ctrl+click; on macOS Ctrl+click is also the system right-click, so the terminal's context menu opens along with it. On the reworked engine the status line says so in a third row, with a `✕ hide` link for those who prefer to stay. Which engine runs is read from the IDE's settings (the shell drops the engine's own marker before Claude Code starts), so the Claude Code plugin's own tab, which is always classic, shows the row too while the setting is the reworked engine; hide it there.
 
 ## How it works
 

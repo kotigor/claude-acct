@@ -110,9 +110,8 @@ test_the_status_line_warns_on_the_reworked_jetbrains_engine() {
   assert_contains "$out" "Ctrl+click"
   assert_contains "$out" "$(esc_ch)]8;;http://claude-acct.localhost/hint/jetbrains/off$(bel_ch)✕ hide"
   assert_contains "$(printf '{}' | COLUMNS=80 TERMINAL_EMULATOR=JetBrains-JediTerm ca statusline)" "⚠ links here need Ctrl+click"
-  # not in other terminals, and not in the Claude Code plugin s own tab, which is classic
+  # not in other terminals
   assert_not_contains "$(printf '{}' | ca statusline)" "Ctrl+click"
-  assert_not_contains "$(printf '{}' | TERMINAL_EMULATOR=JetBrains-JediTerm ENABLE_IDE_INTEGRATION=true ca statusline)" "Ctrl+click"
   # nor once an IDE here is set to the classic engine ...
   jb_ide PhpStorm2025.3
   classic_xml >"$(jb_root)/PhpStorm2025.3/options/terminal.xml"

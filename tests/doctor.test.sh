@@ -87,6 +87,8 @@ test_doctor_tells_a_jetbrains_terminal_which_browser_to_set() {
     "$XDG_DATA_HOME/claude-acct/app/bin/claude-acct-browser" >"$opts/ide.general.local.xml"
   out=$(TERMINAL_EMULATOR=JetBrains-JediTerm ca doctor 2>&1 || true)
   assert_contains "$out" "terminal JetBrains (reworked engine)"
-  out=$(TERMINAL_EMULATOR=JetBrains-JediTerm ENABLE_IDE_INTEGRATION=true ca doctor 2>&1 || true)
+  # once the IDE is set to the classic engine
+  printf '<application><component name="TerminalOptionsProvider"><option name="terminalEngine" value="CLASSIC" /></component></application>\n' >"$opts/terminal.xml"
+  out=$(TERMINAL_EMULATOR=JetBrains-JediTerm ca doctor 2>&1 || true)
   assert_contains "$out" "terminal JetBrains (classic engine): click"
 }

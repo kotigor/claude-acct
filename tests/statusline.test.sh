@@ -23,8 +23,8 @@ test_row_lists_accounts_with_links_and_live_limits() {
   now=$(date +%s)
   out=$(session 24 $((now + 9000)) 5 $((now + 302400)) | ca statusline)
   assert_contains "$out" "${ESC}]8;;http://claude-acct.localhost/use/33084eab${BEL}alice@example.com${ESC}]8;;${BEL}"
-  # the active account s whole segment, limits included, is one link
-  assert_contains "$out" "${ESC}]8;;http://claude-acct.localhost/use/a1eeea2a${BEL}● bob@example.com 5h 24%↻2h · 7d 5%↻3d${ESC}]8;;${BEL}"
+  # the active account s name and limits are one link, with the marker just before it
+  assert_contains "$out" "● ${ESC}]8;;http://claude-acct.localhost/use/a1eeea2a${BEL}bob@example.com 5h 24%↻2h · 7d 5%↻3d${ESC}]8;;${BEL}"
   assert_eq "$(printf '%s' "$out" | row_accounts)" \
     "alice@example.com  │  ● bob@example.com 5h 24%↻2h · 7d 5%↻3d"
   assert_not_contains "$(printf '%s' "$out" | row_controls)" "＋"
@@ -109,7 +109,10 @@ test_the_whole_active_segment_is_bold_and_orange_and_nothing_else_is_styled() {
   now=$(date +%s)
   esc=$(esc_ch)
   out=$(session 24 $((now + 9000)) 5 $((now + 302400)) | COLORTERM=truecolor ca statusline)
-  assert_contains "$out" "${esc}[1;38;2;217;119;87m● bob@example.com 5h 24%↻2h · 7d 5%↻3d${esc}[0m"
+  # the colour opens before the marker and the link starts after it: Claude Code
+  # writes a cell s link before its colour, and JediTerm keeps the style a link
+  # started with, so this is the order that keeps the link orange there
+  assert_contains "$out" "${esc}[1;38;2;217;119;87m● ${esc}]8;;http://claude-acct.localhost/use/a1eeea2a${BEL}bob@example.com 5h 24%↻2h · 7d 5%↻3d${esc}]8;;${BEL}${esc}[0m"
   # no underline anywhere, and the inactive account carries no SGR at all
   assert_not_contains "$out" "${esc}[4m"
   assert_contains "$out" "${BEL}alice@example.com${esc}]8;;"
@@ -118,7 +121,7 @@ test_the_whole_active_segment_is_bold_and_orange_and_nothing_else_is_styled() {
 test_falls_back_to_256_colours_without_truecolor() {
   two_accounts
   unset NO_COLOR
-  assert_contains "$(printf '{}' | COLORTERM='' ca statusline)" "$(esc_ch)[1;38;5;173m● bob@example.com"
+  assert_contains "$(printf '{}' | COLORTERM='' ca statusline)" "$(esc_ch)[1;38;5;173m● $(esc_ch)]8;;"
 }
 
 test_colour_is_dropped_when_the_terminal_does_not_want_it() {

@@ -37,6 +37,7 @@ ca_cmd_open_url() {  # open-url <url>
       [ -z "$out" ] || ca_notify "claude-acct: some limits are missing" "$(printf '%s' "$out" | head -n 2)" ;;
     collapse) ca_ui_set_collapsed true ;;
     expand) ca_ui_set_collapsed false ;;
+    hint/jetbrains/off) ca_ui_set_hint jetbrains false ;;
     *) ca_notify "claude-acct" "Unknown link: $path" ;;
   esac
   return 0

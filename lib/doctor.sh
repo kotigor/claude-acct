@@ -64,10 +64,12 @@ ca_cmd_doctor() {
   fi
 
   if [ "${TERMINAL_EMULATOR:-}" = JetBrains-JediTerm ]; then
-    if ca_jetbrains_configured; then
-      ca_ok "terminal JetBrains: Cmd+click (Ctrl+click on Linux), through the IDE's browser setting"
-    else
+    if ! ca_jetbrains_configured; then
       ca_note "the JetBrains terminal opens links itself; run once: claude-acct jetbrains-setup (or set Settings > Tools > Web Browsers and Preview > Default Browser > Custom path to $CA_APP/bin/claude-acct-browser)"
+    elif [ "$(ca_jetbrains_engine)" = classic ]; then
+      ca_ok "terminal JetBrains (classic engine): click, through the IDE's browser setting"
+    else
+      ca_note "terminal JetBrains (reworked engine): links need Ctrl+click (with a context menu on macOS); Settings > Tools > Terminal > Terminal engine > Classic makes them click normally"
     fi
   fi
   case "${TERM_PROGRAM:-}" in

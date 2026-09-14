@@ -7,7 +7,7 @@ Switch [Claude Code](https://code.claude.com) between **your own** Claude accoun
 ⤡ collapse   ↻ limits
 ```
 
-The active account is bold and orange. Each account segment, limits included, is one link, and so is each control. When the row is wider than the terminal the names shorten to `me…`, and `collapse` / `expand` force it either way.
+The active account is bold and orange. Each account, limits included, is one link (the active marker sits just before it), and so is each control. When the row is wider than the terminal the names shorten to `me…`, and `collapse` / `expand` force it either way.
 
 Everything except the login stays the same: `CLAUDE.md`, settings, plugins, MCP servers, projects, history. Switching does to your credentials exactly what `/login` does, without the browser round trip.
 
@@ -68,6 +68,8 @@ VS Code's terminal opens clicked links itself (Cmd+click, Ctrl+click on Linux) a
 The terminal in PhpStorm, IntelliJ IDEA and the other JetBrains IDEs also opens clicked links by itself, in the browser the IDE is set to use. The installer points that setting at claude-acct's link handler for every JetBrains IDE it finds on the machine (Settings > Tools > Web Browsers and Preview > Default Browser > Custom path, in the IDE's `ide.general.local.xml`), so clicks reach claude-acct the same way they do from Claude Code. The handler takes claude-acct's own links and opens every other link in your system browser, so nothing else changes. An IDE that is running picks the setting up when its window is next focused, or on restart.
 
 `./install.sh --no-jetbrains` skips this; `claude-acct jetbrains-setup` does it later (for an IDE installed afterwards, say); `claude-acct uninstall` puts the previous setting back. Run `claude-acct doctor` from the IDE's terminal to check.
+
+JetBrains ships two terminal engines (Settings > Tools > Terminal > Terminal engine). The classic one understands OSC 8 links: a click goes through the browser setting above, and links underline under the mouse. The reworked one does not, so there the click reaches Claude Code itself, which opens links on Ctrl+click; on macOS Ctrl+click is also the system right-click, so the terminal's context menu opens along with it. On the reworked engine the status line says so in a third row, with a `✕ hide` link for those who prefer to stay. The Claude Code plugin's own terminal tab uses the classic engine.
 
 ## How it works
 

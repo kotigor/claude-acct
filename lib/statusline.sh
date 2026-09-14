@@ -21,6 +21,13 @@ ca_ui_set_collapsed() {  # ca_ui_set_collapsed <true|false>
   ca_ensure_data_dir && printf '%s\n' "$new" | ca_write_atomic "$(ca_ui_path)" 600 && ca_settings_poke
 }
 
+ca_ui_set_hint() {  # ca_ui_set_hint <name> <true|false>: show or hide a hint row for good
+  local new
+  # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
+  new=$(ca_ui_read | jq -c --arg n "$1" --argjson v "$2" '.hints[$n] = $v') || return 1
+  ca_ensure_data_dir && printf '%s\n' "$new" | ca_write_atomic "$(ca_ui_path)" 600 && ca_settings_poke
+}
+
 # Escape sequences for the active account, empty when colour is unwanted or unsupported.
 # Nothing else is styled: the terminal shows what is clickable when the mouse is over it.
 ca_style() {  # ca_style <active|off>
@@ -39,7 +46,7 @@ ca_style() {  # ca_style <active|off>
 
 # The jq program. Inputs: $session (raw text), $index, $rl, $ui, $inst, $gc (each a
 # one-element array from --slurpfile or a fallback), $now, $columns, $auto_seconds,
-# $base, $s_active, $s_off.
+# $base, $s_active, $s_off, $jb_engine (the JetBrains terminal engine, or "").
 # Output, one string per line: the user's own status line command as a JSON string,
 # 1/0 whether a background round is due, the active account's new limits entry
 # as JSON (or "-" when nothing changed), the active account's id (or empty),
@@ -67,13 +74,17 @@ CA_STATUSLINE_JQ='
          | if length > 0 then " " + join(" · ") else "" end end;
   def name($a; $short): if $short then (($a.label | .[0:3]) + "…") else $a.label end;
   # Both spellings of the row: plain to measure against the terminal, styled to print.
-  # The whole segment — marker, name and limits — is one link, and for the active
-  # account one orange run.
+  # Name and limits are one link; the active account is one orange run, with its
+  # marker just before the link rather than inside it: Claude Code writes a cell s
+  # link before its colour, and JediTerm (JetBrains) copies the style current when
+  # a link starts and keeps it, so the link inherits the marker s orange this way
+  # and would keep grey the other way.
   def row($rows; $short):
     [$rows[]
-      | ((if .is_active then "● " else "" end) + name(.; $short) + limits(.src)) as $text
-      | {plain: $text,
-         styled: link("\($base)/use/\(.id)"; (if .is_active then $s_active + $text + $s_off else $text end))}]
+      | (name(.; $short) + limits(.src)) as $body
+      | {plain: ((if .is_active then "● " else "" end) + $body),
+         styled: (if .is_active then $s_active + "● " + link("\($base)/use/\(.id)"; $body) + $s_off
+                  else link("\($base)/use/\(.id)"; $body) end)}]
     | {plain: (map(.plain) | join("  │  ")), styled: (map(.styled) | join("  │  "))};
 
   ($session | try fromjson catch {} | if type == "object" then . else {} end) as $s
@@ -137,7 +148,15 @@ CA_STATUSLINE_JQ='
               if $short then "⤢ expand" else "⤡ collapse" end),
          (if $active == null then link("\($base)/save"; "＋ save") else empty end),
          link("\($base)/refresh"; "↻ limits")]
-        | join("   "))
+        | join("   ")),
+       # A third row for the reworked JetBrains engine, until the user hides it.
+       (if $jb_engine == "reworked" and $ui0.hints.jetbrains != false then
+          ("⚠ this JetBrains terminal engine opens links only with Ctrl+click (with a context menu on macOS); "
+           + "Settings › Tools › Terminal › Terminal engine › Classic makes them click normally") as $long
+          | (if $columns > 0 and ($long | length) + 12 > $columns
+             then "⚠ links here need Ctrl+click; set Terminal engine › Classic" else $long end)
+            + "   " + link("\($base)/hint/jetbrains/off"; "✕ hide")
+        else empty end)
      end)
 '
 
@@ -169,6 +188,7 @@ ca_cmd_statusline() {
   out=$(jq -rn "$@" --arg session "$input" --argjson now "$now" --argjson columns "${COLUMNS:-0}" \
     --argjson auto_seconds "$CA_USAGE_AUTO_SECONDS" --argjson stale_seconds "$CA_RL_STALE_SECONDS" \
     --arg base "$(ca_link_base)" --arg s_active "$(ca_style active)" --arg s_off "$(ca_style off)" \
+    --arg jb_engine "$(ca_jetbrains_engine)" \
     "$CA_STATUSLINE_JQ" 2>/dev/null) || return 0
   { IFS= read -r orig; IFS= read -r due; IFS= read -r patch; IFS= read -r active; rows=$(cat); } <<EOF
 $out

@@ -14,19 +14,17 @@ ca_cmd_open_url() {  # open-url <url>
   case "$path" in
     use/*)
       id=${path#use/}
-      if ! printf '%s' "$id" | grep -Eq '^[0-9a-f]{8}$'; then
+      if ! ca_valid_id "$id" || [ "$id" = __backup__ ]; then
         ca_notify "claude-acct" "Invalid account link"
-      else
-        # Poke before doing anything: Claude Code redraws about a second after the
-        # settings change, and the whole switch fits inside that second.
-        CA_POKED_AT=$(ca_now_ms)
-        ca_settings_poke
+        return 0
       fi
-      if [ -n "${CA_POKED_AT:-}" ] && out=$( (ca_cmd_use "$id") 2>&1); then
-        :
-      elif [ -n "${CA_POKED_AT:-}" ]; then
-        ca_notify "claude-acct: switch failed" "$(printf '%s\n' "$out" | tail -n 1 | sed 's/^claude-acct: //')"
-      fi ;;
+      # Poke before doing anything: Claude Code redraws about a second after the
+      # settings change, and the whole switch fits inside that second.
+      # shellcheck disable=SC2034  # read by ca_switch_to (accounts.sh)
+      CA_POKED_AT=$(ca_now_ms)
+      ca_settings_poke
+      out=$( (ca_cmd_use "$id") 2>&1) ||
+        ca_notify "claude-acct: switch failed" "$(printf '%s\n' "$out" | tail -n 1 | sed 's/^claude-acct: //')" ;;
     save)
       if out=$( (ca_cmd_save) 2>&1); then
         :
@@ -46,7 +44,8 @@ ca_cmd_open_url() {  # open-url <url>
 
 ca_open_elsewhere() {  # open a URL the way it would be opened without claude-acct
   local orig
-  orig=$(jq -r '.originals.env.BROWSER // empty' "$(ca_data_dir)/install.json" 2>/dev/null || true)
+  # settings.json's BROWSER, or the one the shell had when claude-acct was installed
+  orig=$(jq -r '.originals.env.BROWSER // .shellBrowser // empty' "$(ca_data_dir)/install.json" 2>/dev/null || true)
   case "$orig" in *claude-acct-browser*) orig="" ;; esac
   if [ -n "$orig" ]; then
     BROWSER=$orig "$orig" "$@"

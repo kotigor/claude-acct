@@ -15,25 +15,28 @@ ca_settings_apply() {  # ca_settings_apply <app-dir>
   if [ -f "$settings" ]; then cp -p "$settings" "$(ca_data_dir)/backup/settings.json.$(date +%Y%m%d%H%M%S)"; fi
   if [ -f "$(ca_install_state_path)" ]; then state=$(cat "$(ca_install_state_path)"); else state='{}'; fi
 
-  state=$(printf '%s\n%s\n' "$state" "$cur" | jq -cs --arg app "$app" --arg settings "$settings" '
-    def ours_statusline: if type == "object" then ((.command // "") | test("claude-acct.*statusline")) else false end;
+  # The originals are what the user had before the FIRST install. While installed,
+  # whatever the file holds now is ours plus the user's later edits, so a reinstall
+  # keeps the originals it already has instead of re-deriving them (C10). The
+  # shell's own BROWSER is kept too: Claude Code will only ever see ours (C6).
+  state=$(printf '%s\n%s\n' "$state" "$cur" | jq -cs --arg app "$app" --arg settings "$settings" \
+    --arg shell_browser "${BROWSER:-}" '
     def ours_browser: if type == "string" then test("claude-acct-browser") else false end;
     .[0] as $old | .[1] as $cur
-    | {version: 1, appDir: $app, settingsPath: $settings,
-       originals: {
-         statusLine: (if ($cur.statusLine | ours_statusline) then $old.originals.statusLine else $cur.statusLine end),
-         env: {
-           BROWSER: (if ($cur.env.BROWSER | ours_browser) then $old.originals.env.BROWSER else $cur.env.BROWSER end),
-           FORCE_HYPERLINK: (if ($cur.env.BROWSER | ours_browser) then $old.originals.env.FORCE_HYPERLINK
-                             else $cur.env.FORCE_HYPERLINK end)}}}') || return 1
+    | (if ($old.originals | type) == "object" then $old.originals
+       else {statusLine: $cur.statusLine, env: {BROWSER: $cur.env.BROWSER, FORCE_HYPERLINK: $cur.env.FORCE_HYPERLINK}} end) as $originals
+    | {version: 1, appDir: $app, settingsPath: $settings, originals: $originals,
+       shellBrowser: (if ($old.shellBrowser // "") != "" then $old.shellBrowser
+                      elif ($shell_browser | ours_browser | not) and $shell_browser != "" then $shell_browser
+                      else null end)}') || return 1
 
   new=$(printf '%s\n%s\n' "$cur" "$state" | jq -s --arg app "$app" '
     .[1].originals as $o
     | .[0]
-    | .statusLine = ({type: "command",
-                      command: (($app + "/bin/claude-acct" | @sh) + " statusline"),
-                      refreshInterval: ([[10, ($o.statusLine.refreshInterval // 10)] | min, 1] | max)}
-                     + (if $o.statusLine.padding != null then {padding: $o.statusLine.padding} else {} end))
+    | .statusLine = ((if ($o.statusLine | type) == "object" then ($o.statusLine | del(.type, .command, .refreshInterval)) else {} end)
+                     + {type: "command",
+                        command: (($app + "/bin/claude-acct" | @sh) + " statusline"),
+                        refreshInterval: ([[10, ($o.statusLine.refreshInterval // 10)] | min, 1] | max)})
     | .env = ((.env // {}) + {BROWSER: ($app + "/bin/claude-acct-browser"), FORCE_HYPERLINK: "1"})') || return 1
 
   printf '%s\n' "$state" | ca_write_atomic "$(ca_install_state_path)" 600 || return 1

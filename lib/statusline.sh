@@ -39,10 +39,11 @@ ca_style() {  # ca_style <active|off>
 
 # The jq program. Inputs: $session (raw text), $index, $rl, $ui, $inst, $gc (each a
 # one-element array from --slurpfile or a fallback), $now, $columns, $auto_seconds,
-# $auto_enabled, $base, $s_active, $s_off.
+# $base, $s_active, $s_off.
 # Output, one string per line: the user's own status line command as a JSON string,
-# 1/0 whether a background limits refresh is due, the updated ratelimits state as
-# JSON (or "-" when unchanged), then the rows to print (none when logged out).
+# 1/0 whether a background round is due, the active account's new limits entry
+# as JSON (or "-" when nothing changed), the active account's id (or empty),
+# then the rows to print (none when logged out).
 # shellcheck disable=SC2016  # a jq program: the $names are jq variables, not shell
 CA_STATUSLINE_JQ='
   def dur: if . < 3600 then "\(. / 60 | floor)m" elif . < 86400 then "\(. / 3600 | floor)h" else "\(. / 86400 | floor)d" end;
@@ -84,24 +85,23 @@ CA_STATUSLINE_JQ='
   | ([$idx.accounts[] | select(.key == $key) | .id] | .[0]) as $active
 
   # The session only ever reports the active account s limits, and for a moment after
-  # a switch they are still the previous account s. Every account remembers the
-  # signatures of numbers it has shown, so leftovers can be recognised.
+  # a switch they are still the previous account s: exactly the numbers that account
+  # last reported. Only those count as leftovers; two accounts that genuinely report
+  # the same numbers are not confused for each other.
   | ($s.rate_limits // null) as $lim
-  | (if $active == null or ($lim | type) != "object" then {status: "none", state: null}
+  | (if $active == null or ($lim | type) != "object" then {status: "none", entry: null}
      else
        "\($lim.five_hour.resets_at // "")|\($lim.five_hour.used_percentage // "")|\($lim.seven_day.resets_at // "")|\($lim.seven_day.used_percentage // "")" as $sig
-       | ($rl0.accounts[$active].sigs // []) as $mine
-       | if any($rl0.accounts | to_entries[] | select(.key != $active) | .value.sigs[]?; . == $sig)
-         then {status: "stale", state: null}
-         elif ($mine | .[0]) == $sig then {status: "live", state: null}
-         else {status: "live", state: ($rl0 | .accounts[$active] = (($rl0.accounts[$active] // {}) + {
-                 five_hour: ($lim.five_hour // null), seven_day: ($lim.seven_day // null),
-                 observedAt: $now, fetchedAt: $now, source: "session",
-                 sigs: ([$sig] + ($mine | map(select(. != $sig))) | .[:20])}))}
+       | ($rl0.switch.from // null) as $from
+       | if $from != null and $from != $active and $sig == ($rl0.accounts[$from].lastSig // "")
+         then {status: "stale", entry: null}
+         elif ($rl0.accounts[$active].lastSig // "") == $sig then {status: "live", entry: null}
+         else {status: "live", entry: {five_hour: ($lim.five_hour // null), seven_day: ($lim.seven_day // null),
+                                       observedAt: $now, fetchedAt: $now, source: "session", lastSig: $sig}}
          end
      end) as $obs
-  | ($obs.state // $rl0) as $rlnow
-  | ($auto_enabled == 1 and ($now - ($rl0.auto.at // 0)) >= $auto_seconds) as $due
+  | (if $obs.entry then ($rl0 | .accounts[$active] = ((.accounts[$active] // {}) + $obs.entry)) else $rl0 end) as $rlnow
+  | (($now - ($rl0.auto.at // 0)) >= $auto_seconds) as $due
 
   | [$idx.accounts[]
       | . + {is_active: (.id == $active),
@@ -113,7 +113,7 @@ CA_STATUSLINE_JQ='
      elif $columns > 0 and (row($rows; false).plain | length) > ($columns - 2) then true
      else false end) as $short
 
-  | ($orig | @json), (if $due then "1" else "0" end), (if $obs.state then ($obs.state | tojson) else "-" end),
+  | ($orig | @json), (if $due then "1" else "0" end), (if $obs.entry then ($obs.entry | tojson) else "-" end), ($active // ""),
     (if $key == null then empty else
        row($rows; $short).styled,
        ([link("\($base)/" + (if $short then "expand" else "collapse" end);
@@ -125,7 +125,7 @@ CA_STATUSLINE_JQ='
 '
 
 ca_cmd_statusline() {
-  local input now data out orig due state rows
+  local input now data out orig due entry active rows
   input=$(cat)
   now=$(date +%s)
   data=$(ca_data_dir)
@@ -141,10 +141,9 @@ ca_cmd_statusline() {
   done
   out=$(jq -rn "$@" --arg session "$input" --argjson now "$now" --argjson columns "${COLUMNS:-0}" \
     --argjson auto_seconds "$CA_USAGE_AUTO_SECONDS" \
-    --argjson auto_enabled "$([ "${CLAUDE_ACCT_AUTO_REFRESH:-1}" = 0 ] && echo 0 || echo 1)" \
     --arg base "$CA_URL_BASE" --arg s_active "$(ca_style active)" --arg s_off "$(ca_style off)" \
     "$CA_STATUSLINE_JQ" 2>/dev/null) || return 0
-  { IFS= read -r orig; IFS= read -r due; IFS= read -r state; rows=$(cat); } <<EOF
+  { IFS= read -r orig; IFS= read -r due; IFS= read -r entry; IFS= read -r active; rows=$(cat); } <<EOF
 $out
 EOF
   if [ "$orig" != '""' ]; then
@@ -156,8 +155,10 @@ EOF
     fi
   fi
   [ -z "$rows" ] || printf '%s\n' "$rows"
-  if [ "$state" != "-" ] && printf '%s' "$state" | jq -e . >/dev/null 2>&1; then
-    { ca_ensure_data_dir && printf '%s\n' "$state" | ca_write_atomic "$data/ratelimits.json" 600; } 2>/dev/null || true
+  if [ "$entry" != "-" ] && [ -n "$active" ] && printf '%s' "$entry" | jq -e . >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
+    ca_rl_update '.accounts[$id] = ((.accounts[$id] // {}) + $entry)' --arg id "$active" --argjson entry "$entry" \
+      >/dev/null 2>&1 || true
   fi
   # Keep the numbers current even while the user is idle waiting for a reset.
   [ "$due" != 1 ] || ca_usage_maybe_refresh

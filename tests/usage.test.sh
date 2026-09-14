@@ -242,3 +242,19 @@ test_the_background_round_does_not_touch_an_unsaved_active_account() {
   assert_fails ca_lib ca_vault_get "$(ca_lib ca_account_id acc-carol:org-carol)"
   assert_not_contains "$(cat "$XDG_DATA_HOME/claude-acct/claude-acct.log")" "sync"
 }
+
+test_refresh_reports_an_account_whose_saved_copy_has_no_access_token() {
+  two_accounts
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  ca_lib ca_vault_get 33084eab | jq -c 'del(.claudeAiOauth.accessToken)' | ca_lib ca_vault_put 33084eab
+  assert_contains "$(ca refresh 2>&1 || true)" "alice@example.com: login expired"
+}
+
+test_turning_lookups_off_keeps_the_token_re_save() {
+  two_accounts
+  cc_refresh bob2
+  : >"$FAKE_LOG"
+  printf '{}' | CLAUDE_ACCT_AUTO_REFRESH=0 CA_USAGE_SYNC=1 ca statusline >/dev/null
+  assert_eq "$(grep -c '^curl url=' "$FAKE_LOG" || true)" "0"
+  assert_eq "$(ca_lib ca_vault_get a1eeea2a | jq -r .claudeAiOauth.refreshToken)" "rt-bob2"
+}

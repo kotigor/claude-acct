@@ -97,3 +97,32 @@ test_a_sub_second_refresh_interval_is_raised_to_one() {
   install_it
   assert_eq "$(settings_json | jq -r .statusLine.refreshInterval)" "1"
 }
+
+test_a_reinstall_after_the_user_changed_the_browser_keeps_the_first_originals() {
+  mkdir -p "$HOME/.claude"
+  printf '{"env":{"BROWSER":"firefox"}}' >"$HOME/.claude/settings.json"
+  install_it
+  jq '.env.BROWSER = "chromium"' "$HOME/.claude/settings.json" >"$T/s" && mv "$T/s" "$HOME/.claude/settings.json"
+  install_it
+  assert_eq "$(state_json | jq -r .originals.env.BROWSER)" "firefox"
+  assert_eq "$(state_json | jq -r '.originals.env.FORCE_HYPERLINK // "absent"')" "absent"
+  "$ROOT/uninstall.sh" >/dev/null
+  assert_eq "$(jq -c .env "$HOME/.claude/settings.json")" '{"BROWSER":"firefox"}'
+}
+
+test_install_keeps_other_status_line_keys() {
+  mkdir -p "$HOME/.claude"
+  printf '{"statusLine":{"type":"command","command":"echo hi","hideVimModeIndicator":true,"padding":2}}' >"$HOME/.claude/settings.json"
+  install_it
+  assert_eq "$(settings_json | jq -c '[.statusLine.hideVimModeIndicator, .statusLine.padding]')" "[true,2]"
+  assert_contains "$(settings_json | jq -r .statusLine.command)" "claude-acct"
+}
+
+test_install_remembers_the_shell_browser() {
+  BROWSER="$HOME/my-browser" install_it
+  assert_eq "$(state_json | jq -r .shellBrowser)" "$HOME/my-browser"
+  # shellcheck disable=SC2016  # the script expands these when it runs
+  printf '#!/bin/sh\necho "shell-browser $*" >>"$FAKE_LOG"\n' >"$HOME/my-browser"; chmod +x "$HOME/my-browser"
+  BROWSER="$XDG_DATA_HOME/claude-acct/app/bin/claude-acct-browser" ca open-url "https://example.com"
+  assert_contains "$(cat "$FAKE_LOG")" "shell-browser https://example.com"
+}

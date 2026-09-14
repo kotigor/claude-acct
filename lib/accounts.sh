@@ -83,52 +83,36 @@ ca_apply() {
     got=$(ca_store_read | jq -r '.claudeAiOauth.refreshToken // empty') &&
     [ "$got" = "$want" ]; then
     acct=$(printf '%s' "$2" | jq -c '.oauthAccount // null')
-    if [ "$acct" != null ]; then
-      printf '%s' "$acct" | ca_gconfig_set_account ||
-        ca_warn "could not update $(ca_global_config_path); Claude Code refreshes it on its next start"
-    else
-      # The record is a logged-out state: the config must not keep naming an account
-      # whose tokens are gone, or the next switch to it would think it is already active.
-      ca_gconfig_clear_account ||
-        ca_warn "could not update $(ca_global_config_path); Claude Code refreshes it on its next start"
+    # The config and the store must agree: the background re-save picks the vault
+    # slot from the config, so a store holding B under a config naming A would file
+    # B's tokens under A. A record without an account is a logged-out state and
+    # clears the config for the same reason.
+    if { [ "$acct" != null ] && printf '%s' "$acct" | ca_gconfig_set_account; } ||
+       { [ "$acct" = null ] && ca_gconfig_clear_account; }; then
+      return 0
     fi
-    return 0
+    ca_warn "could not update $(ca_global_config_path); undoing the switch"
   fi
   printf '%s' "$1" | ca_store_write || ca_warn "rollback failed; run: claude-acct restore"
   return 1
 }
 
-ca_live_blob() {  # the current blob, {} when logged out; dies when it exists but cannot be read
-  local blob
-  if ! ca_store_present; then
-    printf '{}'
-    return 0
+# ca_current_state: what Claude Code holds now — CA_LIVE (blob, {} when logged
+# out), CA_ACCT (oauthAccount or null) and CA_CUR_ID (its id, or empty).
+ca_current_state() {
+  CA_LIVE=$(ca_live_blob) || return 1
+  if CA_ACCT=$(ca_gconfig_account); then
+    CA_CUR_ID=$(ca_account_id "$(printf '%s' "$CA_ACCT" | ca_account_key)")
+  else
+    CA_ACCT=null
+    CA_CUR_ID=""
   fi
-  blob=$(ca_store_read) || ca_die "could not read Claude Code credentials; nothing was changed"
-  if printf '%s' "$blob" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
-    ca_require_valid_blob "$blob"
-  fi
-  printf '%s' "$blob"
 }
 
-ca_cmd_use() {  # use <account>
-  local id saved live acct cur_id="" overrides started
-  [ $# -eq 1 ] || ca_die "usage: claude-acct use <account>"
-  ca_lock
-  id=$(ca_index_find "$1") || exit 1
-  saved=$(ca_vault_get "$id") ||
-    ca_die "no saved credentials for $id; log in to that account and run: claude-acct save"
-  live=$(ca_live_blob) || exit 1
-  if acct=$(ca_gconfig_account); then
-    cur_id=$(ca_account_id "$(printf '%s' "$acct" | ca_account_key)")
-  else
-    acct=null
-  fi
-  if [ "$cur_id" = "$id" ] && printf '%s' "$live" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
-    printf 'Already using %s (%s)\n' "$(ca_index_label "$id")" "$id"
-    return 0
-  fi
-
+# ca_switch_to <record> <label> [poked-at-ms]: the switch itself, shared by use
+# and restore. Expects ca_current_state to have run under ca_lock.
+ca_switch_to() {
+  local record=$1 label=$2 started=${3:-} overrides
   overrides=$(ca_overrides | paste -sd, - || true)
   [ -z "$overrides" ] ||
     ca_warn "note: $overrides takes precedence over the login, so Claude Code keeps using it"
@@ -136,33 +120,34 @@ ca_cmd_use() {  # use <account>
   # Poke now, not after: Claude Code redraws about a second after settings change,
   # and the switch below finishes well within that, so the redraw shows the result.
   # A click has already poked before even resolving the account (see url.sh).
-  if [ -n "${CA_POKED_AT:-}" ]; then
-    started=$CA_POKED_AT
-  else
+  if [ -z "$started" ]; then
     started=$(ca_now_ms)
     ca_settings_poke
   fi
 
   # Refresh tokens rotate while an account is in use: update its saved copy before leaving.
-  if [ -n "$cur_id" ] && ca_index_get "$cur_id" >/dev/null 2>&1 &&
-    printf '%s' "$live" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
-    printf '%s\n%s\n' "$live" "$acct" | ca_vault_record | ca_vault_put "$cur_id" ||
+  if [ -n "$CA_CUR_ID" ] && ca_index_get "$CA_CUR_ID" >/dev/null 2>&1 &&
+    printf '%s' "$CA_LIVE" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
+    printf '%s\n%s\n' "$CA_LIVE" "$CA_ACCT" | ca_vault_record | ca_vault_put "$CA_CUR_ID" ||
       ca_die "could not update the saved copy of the current account; nothing was switched"
-  elif [ -n "$cur_id" ]; then
+  elif [ -n "$CA_CUR_ID" ]; then
     ca_warn "the account you are leaving is not saved; to keep it, /login to it and click ＋ save"
   fi
 
   # The backup goes first, so a failed rollback can still point at it.
-  printf '%s\n%s\n' "$live" "$acct" | ca_vault_record | ca_vault_put __backup__ ||
+  printf '%s\n%s\n' "$CA_LIVE" "$CA_ACCT" | ca_vault_record | ca_vault_put __backup__ ||
     ca_die "could not write the backup; nothing was switched"
-  ca_apply "$live" "$saved" || ca_die "switch failed; the previous login is still active"
-  ca_log "use $id (was ${cur_id:-none})"
-  printf 'Switched to %s (%s)\n' "$(ca_index_label "$id")" "$id"
+  ca_apply "$CA_LIVE" "$record" || ca_die "switch failed; the previous login is still active"
+  # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
+  ca_rl_update '.switch = {from: (if $from == "" then null else $from end), at: $now}' \
+    --arg from "${CA_CUR_ID:-}" --argjson now "$(date +%s)" >/dev/null 2>&1 || true
+  ca_log "switch to $label (was ${CA_CUR_ID:-none})"
+  printf 'Switched to %s\n' "$label"
 
   # Bookkeeping nothing above depends on: the index entry of the account just left.
-  if [ -n "$cur_id" ] && [ "$acct" != null ] && ca_index_get "$cur_id" >/dev/null 2>&1; then
-    ca_index_upsert "$(printf '%s\n%s\n' "$live" "$acct" |
-      ca_index_entry "$cur_id" "$(printf '%s' "$acct" | ca_account_key)" "")" || true
+  if [ -n "$CA_CUR_ID" ] && [ "$CA_ACCT" != null ] && ca_index_get "$CA_CUR_ID" >/dev/null 2>&1; then
+    ca_index_upsert "$(printf '%s\n%s\n' "$CA_LIVE" "$CA_ACCT" |
+      ca_index_entry "$CA_CUR_ID" "$(printf '%s' "$CA_ACCT" | ca_account_key)" "")" || true
   fi
   # If a status line already drew while the switch was in progress, it showed the
   # old account: poke once more so the next redraw shows the new one.
@@ -179,10 +164,38 @@ ca_cmd_use() {  # use <account>
   return 0
 }
 
+ca_live_blob() {  # the current blob, {} when logged out; dies when it exists but cannot be read
+  local blob
+  if ! ca_store_present; then
+    printf '{}'
+    return 0
+  fi
+  blob=$(ca_store_read) || ca_die "could not read Claude Code credentials; nothing was changed"
+  if printf '%s' "$blob" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
+    ca_require_valid_blob "$blob"
+  fi
+  printf '%s' "$blob"
+}
+
+ca_cmd_use() {  # use <account>
+  local id saved
+  [ $# -eq 1 ] || ca_die "usage: claude-acct use <account>"
+  ca_lock
+  id=$(ca_index_find "$1") || exit 1
+  saved=$(ca_vault_get "$id") ||
+    ca_die "no saved credentials for $id; log in to that account and run: claude-acct save"
+  ca_current_state || exit 1
+  if [ "$CA_CUR_ID" = "$id" ] && printf '%s' "$CA_LIVE" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
+    printf 'Already using %s (%s)\n' "$(ca_index_label "$id")" "$id"
+    return 0
+  fi
+  ca_switch_to "$saved" "$(ca_index_label "$id") ($id)" "${CA_POKED_AT:-}"
+}
+
 # ca_sync_active: bring the vault copy of the active account up to date with the
 # tokens Claude Code is using now. Refresh tokens rotate while an account is in
 # use, and /login to another account drops the old ones without telling us, so
-# the background refresh calls this every few minutes. Nothing to do when the
+# the background round calls this every few minutes. Nothing to do when the
 # active account is not saved, or when the tokens have not changed.
 ca_sync_active() {
   local acct id live saved
@@ -201,12 +214,11 @@ ca_sync_active() {
 }
 
 ca_cmd_restore() {
-  local backup live
+  local backup
   ca_lock
   backup=$(ca_vault_get __backup__) || ca_die "there is no backup yet"
-  live=$(ca_live_blob) || exit 1
-  ca_apply "$live" "$backup" || ca_die "restore failed"
-  ca_log "restore"
-  echo "Restored the login from before the last switch"
-  ca_settings_poke
+  ca_current_state || exit 1
+  # A restore is a switch like any other: it re-saves the account it leaves and
+  # writes a new backup, so a second restore goes back again.
+  ca_switch_to "$backup" "$(printf '%s' "$backup" | jq -r '.oauthAccount.emailAddress // "the logged-out state"') (restored)"
 }

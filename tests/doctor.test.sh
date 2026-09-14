@@ -56,3 +56,16 @@ test_doctor_does_not_mistake_user_settings_for_project_settings() {
   cd "$HOME" || return 1
   assert_not_contains "$(ca doctor || true)" "sets its own statusLine"
 }
+
+test_doctor_calls_a_logged_out_store_logged_out_not_broken() {
+  "$ROOT/install.sh" >/dev/null
+  cc_login alice
+  ca save >/dev/null
+  cc_store_get | jq -c 'del(.claudeAiOauth, .trustedDeviceToken)' | cc_store_put
+  jq 'del(.oauthAccount)' "$(gc_path)" >"$T/g" && mv "$T/g" "$(gc_path)"
+  local out
+  out=$(ca doctor || true)
+  assert_contains "$out" "warn  credentials"
+  assert_contains "$out" "logged out"
+  assert_not_contains "$out" "FAIL  credentials"
+}

@@ -50,15 +50,18 @@ ca_kc_write() {  # ca_kc_write <service> <account>: store stdin, verified by rea
 }
 
 ca_store_backend() {  # keychain | file: where Claude Code keeps credentials right now
-  if [ "$(ca_platform)" != Darwin ]; then
-    echo file
-  elif ca_kc_exists "$(ca_keychain_service)" "$(ca_keychain_account)"; then
-    echo keychain
-  elif [ -f "$(ca_credentials_file)" ]; then
-    echo file
-  else
-    echo keychain
+  if [ -z "${CA_STORE_BACKEND:-}" ]; then  # probed once per command, not once per read
+    if [ "$(ca_platform)" != Darwin ]; then
+      CA_STORE_BACKEND='file'
+    elif ca_kc_exists "$(ca_keychain_service)" "$(ca_keychain_account)"; then
+      CA_STORE_BACKEND='keychain'
+    elif [ -f "$(ca_credentials_file)" ]; then
+      CA_STORE_BACKEND='file'
+    else
+      CA_STORE_BACKEND='keychain'
+    fi
   fi
+  printf '%s\n' "$CA_STORE_BACKEND"
 }
 
 ca_store_present() {  # is there a credential blob at all?

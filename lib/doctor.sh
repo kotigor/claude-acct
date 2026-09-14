@@ -17,6 +17,8 @@ ca_cmd_doctor() {
     ca_bad "credentials: could not read them ($backend)"
   elif printf '%s' "$blob" | ca_oauth_valid; then
     ca_ok "credentials: $backend, format recognised"
+  elif ! printf '%s' "$blob" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
+    ca_note "credentials: $backend, logged out (MCP logins and plugin secrets kept); /login or switch to a saved account"
   else
     ca_bad "credentials: $backend, unexpected format; switching is disabled until claude-acct is updated"
   fi

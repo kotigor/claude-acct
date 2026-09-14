@@ -65,7 +65,7 @@ ca_usage_token() {  # ca_usage_token <id>: that account's access token
 # and store what comes back. Accounts are asked in parallel. Prints one line per
 # account that could not be read. Never fails the caller.
 ca_usage_refresh() {
-  local max_age=0 ids="" id token dir now line status merged
+  local max_age=0 ids="" id token dir now line status
   CA_USAGE_STORED=0
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -88,6 +88,7 @@ ca_usage_refresh() {
     token=$(ca_usage_token "$id") || token=""
     if [ -z "$token" ]; then
       printf 'expired\n' >"$dir/$id.err"
+      : >"$dir/$id.json"  # an empty answer, so the report below sees this account
       continue
     fi
     (ca_usage_get "$token" >"$dir/$id.json" 2>"$dir/$id.err") &
@@ -97,13 +98,11 @@ ca_usage_refresh() {
   for id in $ids; do
     [ -f "$dir/$id.json" ] || continue
     if [ -s "$dir/$id.json" ]; then
-      merged=$(printf '%s\n%s\n' "$(ca_rl_read)" "$(cat "$dir/$id.json")" |
-        jq -cs --arg aid "$id" --argjson now "$now" '
-          .[0] as $state | .[1] as $new
-          | $state
-          | .accounts[$aid] = (($state.accounts[$aid] // {}) + $new + {fetchedAt: $now, source: "api"})' 2>/dev/null) ||
-        merged=""
-      [ -z "$merged" ] || { printf '%s\n' "$merged" | ca_write_atomic "$(ca_rl_path)" 600 && CA_USAGE_STORED=1; } || true
+      # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
+      if ca_rl_update '.accounts[$aid] = ((.accounts[$aid] // {}) + $new + {fetchedAt: $now, source: "api"})' \
+        --arg aid "$id" --argjson new "$(cat "$dir/$id.json")" --argjson now "$now" 2>/dev/null; then
+        CA_USAGE_STORED=1
+      fi
     else
       status=$(head -n 1 "$dir/$id.err" 2>/dev/null)
       case "$status" in
@@ -131,14 +130,25 @@ ca_cmd_refresh() {  # refresh [account ...]
   ca_cmd_list
 }
 
-# ca_usage_maybe_refresh: called from the status line. Asks for the numbers again
-# at most every CA_USAGE_AUTO_SECONDS, in a detached process so the status line
-# never waits for the network. Idle sessions are refreshed too, because waiting
-# for a limit to reset is exactly when the countdown matters.
-# Set CLAUDE_ACCT_AUTO_REFRESH=0 to turn this off.
+# ca_usage_round: one background round — the limits of every account (unless
+# CLAUDE_ACCT_AUTO_REFRESH=0 turns the network lookups off) and, always, the
+# saved copy of the active account's tokens.
+ca_usage_round() {  # ca_usage_round <lock-dir>
+  if [ "${CLAUDE_ACCT_AUTO_REFRESH:-1}" != 0 ]; then
+    ca_usage_refresh >/dev/null 2>&1 || true
+    [ "${CA_USAGE_STORED:-0}" = 1 ] && ca_settings_poke
+  fi
+  (ca_lock; ca_sync_active) >/dev/null 2>&1 || true
+  rmdir "$1" 2>/dev/null || true
+  return 0
+}
+
+# ca_usage_maybe_refresh: called from the status line. Runs a round at most
+# every CA_USAGE_AUTO_SECONDS, in a detached process so the status line never
+# waits for the network. Idle sessions get their round too, because waiting for
+# a limit to reset is exactly when the countdown matters.
 ca_usage_maybe_refresh() {
-  local now last lock new
-  [ "${CLAUDE_ACCT_AUTO_REFRESH:-1}" = 0 ] && return 0
+  local now last lock
   now=$(date +%s)
   last=$(ca_rl_read | jq -r '.auto.at // 0' 2>/dev/null) || return 0
   [ "$((now - last))" -ge "$CA_USAGE_AUTO_SECONDS" ] || return 0
@@ -151,20 +161,13 @@ ca_usage_maybe_refresh() {
   # Several sessions run a status line at once; only the one that takes the lock asks.
   mkdir "$lock" 2>/dev/null || return 0
   # Claim the slot before fetching, so a slow answer does not let the others pile on.
-  new=$(ca_rl_read | jq -c --argjson now "$now" '.auto = {at: $now}' 2>/dev/null) &&
-    printf '%s\n' "$new" | ca_write_atomic "$(ca_rl_path)" 600
+  # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
+  ca_rl_update '.auto = {at: $now}' --argjson now "$now" >/dev/null 2>&1 || true
 
-  # Once new numbers are stored, poke the status line so they show up right away.
-  # The same round keeps the vault copy of the active account current.
   if [ "${CA_USAGE_SYNC:-0}" = 1 ]; then
-    ca_usage_refresh >/dev/null 2>&1 || true
-    [ "${CA_USAGE_STORED:-0}" = 1 ] && ca_settings_poke
-    (ca_lock; ca_sync_active) >/dev/null 2>&1 || true
-    rmdir "$lock" 2>/dev/null || true
+    ca_usage_round "$lock"
   else
-    (ca_usage_refresh >/dev/null 2>&1; [ "${CA_USAGE_STORED:-0}" = 1 ] && ca_settings_poke
-     (ca_lock; ca_sync_active) >/dev/null 2>&1 || true
-     rmdir "$lock" 2>/dev/null || true) >/dev/null 2>&1 </dev/null &
+    (ca_usage_round "$lock") >/dev/null 2>&1 </dev/null &
   fi
   return 0
 }

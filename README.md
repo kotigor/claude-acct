@@ -45,7 +45,7 @@ To add another account later, just `/login` again and click **＋ save**. The sa
 
 ## Switch
 
-Click an account in the status line. The row updates within a couple of seconds, a notification confirms the switch, and open sessions follow within seconds. From a terminal:
+Click an account in the status line. The row updates within a couple of seconds and open sessions follow; a notification appears only if something went wrong. From a terminal:
 
 ```sh
 claude-acct list
@@ -63,7 +63,7 @@ claude-acct doctor
 - **Saved accounts** live in the Keychain (service `claude-acct`) on macOS and in `0600` files under `~/.local/share/claude-acct/vault` on Linux. Claude Code rotates refresh tokens while an account is in use, and `/login` to another account drops the old ones, so claude-acct re-saves the active account's tokens before every switch and, every few minutes, whenever they changed.
 - **Clicks.** The status line prints links to `http://claude-acct.localhost/…`. Claude Code opens clicked links with `$BROWSER`, which points to `claude-acct-browser`; it handles these links and passes every other link to your browser as before.
 - **Redraws.** Claude Code re-runs a status line the moment its `command` changes in `settings.json`, so after every click or finished refresh claude-acct puts a fresh `--tick <ms>` argument on its own command and every open session redraws the row about 1.2 seconds after the last such change; the value only grows, so changes that land close together merge into one redraw rather than cancelling out. The timer (`refreshInterval: 10`) only moves the countdown.
-- **Limits.** Claude Code reports rate limits only for the active account. For the rest, claude-acct asks the same endpoint Claude Code itself uses (`GET /api/oauth/usage`) with each account's own token, so the row shows real numbers for everyone. The numbers refresh at most once every 5 minutes, which is the same interval Claude Code caches them for, and also on a switch or a click of `↻ limits`. Idle sessions keep refreshing on purpose: waiting for a limit to reset is exactly when the countdown matters. No prompt is sent and no quota is consumed. Set `CLAUDE_ACCT_AUTO_REFRESH=0` to refresh only when you ask. If an account's login has expired, its numbers are left out and `refresh` says so.
+- **Limits.** Claude Code reports rate limits only for the active account. For the rest, claude-acct asks the same endpoint Claude Code itself uses (`GET /api/oauth/usage`) with each account's own token, so the row shows real numbers for everyone. The numbers refresh at most once every 5 minutes, which is the same interval Claude Code caches them for, and also on a switch or a click of `↻ limits`. Idle sessions keep refreshing on purpose: waiting for a limit to reset is exactly when the countdown matters. No prompt is sent and no quota is consumed. Set `CLAUDE_ACCT_AUTO_REFRESH=0` to look limits up only when you ask; the background round still runs to keep the saved tokens current. If an account's login has expired, its numbers are left out and `refresh` says so.
 
 Running Claude Code sessions are not restarted: they re-read credentials before refreshing tokens and cannot overwrite the switched login.
 

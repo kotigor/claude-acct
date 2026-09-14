@@ -75,3 +75,16 @@ test_browser_shim_forwards_to_open_url() {
   "$ROOT/bin/claude-acct-browser" "http://claude-acct.localhost/save"
   assert_contains "$(ca list)" "alice@example.com"
 }
+
+test_a_foreign_link_opens_even_without_jq() {
+  mkdir -p "$T/nojq"
+  # everything but jq
+  for tool in bash sh dirname readlink uname id sed grep cat mkdir rmdir find sleep date printf mktemp mv rm chmod perl xxd \
+    security open xdg-open osascript notify-send tr head tail cut wc paste shasum sha256sum; do
+    p=$(command -v "$tool" 2>/dev/null) && ln -sf "$p" "$T/nojq/$tool"
+  done
+  local rc=0
+  PATH="$T/nojq" "$ROOT/bin/claude-acct-browser" "https://claude.ai/oauth/authorize" || rc=$?
+  assert_eq "$rc" "0"
+  assert_contains "$(cat "$FAKE_LOG")" "https://claude.ai/oauth/authorize"
+}

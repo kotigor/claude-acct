@@ -14,6 +14,12 @@ for f in "$CA_APP"/lib/*.sh; do
   . "$f"
 done
 
+# A link that is not ours needs no jq: the /login page must open even from a
+# Claude Code whose PATH lacks Homebrew.
+case "${1:-}${2:+ $2}" in
+  "open-url $CA_URL_BASE"/* | open-url) ;;
+  open-url\ *) ca_open_elsewhere "$2"; exit ;;
+esac
 command -v jq >/dev/null 2>&1 || ca_die "jq is required (macOS 15+ includes it; on Linux install the jq package)"
 
 usage() {

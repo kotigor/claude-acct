@@ -4,7 +4,10 @@
 
 CA_VAULT_SERVICE=claude-acct
 
-ca_valid_id() { printf '%s' "$1" | grep -Eq '^([0-9a-f]{8}|__backup__)$'; }
+ca_valid_id() {
+  case "$1" in *$'\n'* | *$'\r'*) return 1 ;; esac
+  printf '%s' "$1" | grep -Eq '^([0-9a-f]{8}|__backup__)$'
+}
 
 ca_vault_put() {  # ca_vault_put <id>: store stdin
   local dir

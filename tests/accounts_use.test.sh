@@ -134,3 +134,36 @@ test_use_does_not_trust_a_config_whose_tokens_are_gone() {
   assert_contains "$(ca use bob@example.com)" "Switched to bob@example.com"
   assert_eq "$(live_rt)" "rt-bob"
 }
+
+test_a_failed_config_write_undoes_the_credential_switch() {
+  two_accounts
+  # a half-written ~/.claude.json: jq cannot update it, so the switch cannot be recorded
+  printf '{"oauthAccount": {"accountUuid": "acc-bob", "organizationUuid": "org-bob"' >"$(gc_path)"
+  local out rc=0
+  out=$(ca use alice@example.com 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the switch reported success although the config was not updated"
+  assert_contains "$out" "switch failed"
+  assert_eq "$(live_rt)" "rt-bob"
+  # nothing of alice s was filed under bob s slot afterwards either
+  printf '{}' | CLAUDE_ACCT_AUTO_REFRESH=1 CA_USAGE_SYNC=1 ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_vault_get a1eeea2a | jq -r .claudeAiOauth.refreshToken)" "rt-bob"
+}
+
+test_restore_re_saves_the_account_it_leaves_and_can_be_undone() {
+  two_accounts
+  ca use alice@example.com >/dev/null
+  cc_refresh alice2                       # Claude Code rotated alice s tokens meanwhile
+  ca restore >/dev/null
+  assert_eq "$(live_rt)" "rt-bob"
+  assert_eq "$(ca_lib ca_vault_get 33084eab | jq -r .claudeAiOauth.refreshToken)" "rt-alice2"
+  ca restore >/dev/null                   # a second restore goes back again
+  assert_eq "$(live_rt)" "rt-alice2"
+  assert_eq "$(live_email)" "alice@example.com"
+}
+
+test_ids_with_a_line_break_are_rejected() {
+  two_accounts
+  ca open-url "$(printf 'http://claude-acct.localhost/use/deadbeef\n../x')"
+  assert_contains "$(cat "$FAKE_LOG")" "Invalid account link"
+  assert_fails ca_lib ca_vault_get "$(printf '33084eab\nx')"
+}

@@ -178,3 +178,21 @@ test_the_original_status_line_gets_a_newline_terminated_input() {
     >"$XDG_DATA_HOME/claude-acct/install.json"
   assert_eq "$(printf '{"a":1}' | ca statusline | strip_style | head -n 1)" "got 7"
 }
+
+test_only_the_previous_account_s_last_numbers_count_as_leftovers() {
+  two_accounts
+  local now
+  now=$(date +%s)
+  # bob once showed 0/0, but the numbers it left behind are 50/10
+  printf '{"rate_limits":{"five_hour":{"used_percentage":0,"resets_at":null},"seven_day":{"used_percentage":0,"resets_at":null}}}' |
+    ca statusline >/dev/null
+  session 50 $((now + 9000)) 10 $((now + 302400)) | ca statusline >/dev/null
+  ca use alice@example.com >/dev/null
+  # the very same 0/0 from alice is her own, not a leftover
+  printf '{"rate_limits":{"five_hour":{"used_percentage":0,"resets_at":null},"seven_day":{"used_percentage":0,"resets_at":null}}}' |
+    ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "0"
+  # while bob s actual leftovers are still recognised
+  session 50 $((now + 9000)) 10 $((now + 302400)) | ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "0"
+}

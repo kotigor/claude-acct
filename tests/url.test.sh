@@ -88,3 +88,10 @@ test_a_foreign_link_opens_even_without_jq() {
   assert_eq "$rc" "0"
   assert_contains "$(cat "$FAKE_LOG")" "https://claude.ai/oauth/authorize"
 }
+
+test_the_link_handler_works_from_an_ide_with_a_bare_path() {
+  "$ROOT/install.sh" --no-vscode >/dev/null
+  # an IDE launched from the Dock runs it without Homebrew or ~/.local/bin on PATH
+  PATH=/usr/bin:/bin "$XDG_DATA_HOME/claude-acct/app/bin/claude-acct-browser" http://claude-acct.localhost/collapse
+  assert_eq "$(jq -r .collapsed "$XDG_DATA_HOME/claude-acct/ui.json")" "true"
+}

@@ -19,7 +19,7 @@ claude-acct is for people who pay for more than one Claude subscription themselv
 
 - Claude Code with **fullscreen rendering** (`/tui fullscreen`): clicks in the status line only work there.
 - macOS, or Linux/WSL, with bash and `jq` (macOS 15+ ships `jq`).
-- A terminal in which Claude Code handles link clicks: Ghostty and Warp (plain click), iTerm2, kitty, WezTerm (Cmd+click). The VS Code terminal opens links by itself; the installer adds a tiny extension for it (see below).
+- A terminal in which Claude Code handles link clicks: Ghostty and Warp (plain click), iTerm2, kitty, WezTerm (Cmd+click). The VS Code and JetBrains terminals open links by themselves; the installer sets both up (see below).
   Warp shows a URL tooltip over every link; to hide it, add `link_tooltip = false` under `[general]` in `~/.warp/settings.toml` (hot-reloaded, no restart).
 
 ## Install
@@ -62,6 +62,12 @@ claude-acct doctor
 VS Code's terminal opens clicked links itself (Cmd+click, Ctrl+click on Linux) and sends `localhost` links to its built-in browser, so Claude Code never hands them to `$BROWSER` there. The installer handles it: when VS Code is on the machine, `install.sh` also builds a tiny extension (`kotigor.claude-acct`, one file: it receives `vscode://kotigor.claude-acct/...` links and passes them to `claude-acct open-url`) and installs it with VS Code's `code` command; the status line then links through that scheme whenever it runs inside VS Code. Reload open windows afterwards; the first click asks whether the extension may open the link.
 
 `./install.sh --no-vscode` skips this; `claude-acct vscode-setup` does it later; `claude-acct uninstall` removes the extension too. If `code` is not on your PATH, install it from the Command Palette ("Shell Command: Install 'code' command in PATH") or point `CLAUDE_ACCT_CODE_CLI` at it.
+
+## JetBrains IDEs
+
+The terminal in PhpStorm, IntelliJ IDEA and the other JetBrains IDEs also opens clicked links by itself, in the browser the IDE is set to use. The installer points that setting at claude-acct's link handler for every JetBrains IDE it finds on the machine (Settings > Tools > Web Browsers and Preview > Default Browser > Custom path, in the IDE's `ide.general.local.xml`), so clicks reach claude-acct the same way they do from Claude Code. The handler takes claude-acct's own links and opens every other link in your system browser, so nothing else changes. An IDE that is running picks the setting up when its window is next focused, or on restart.
+
+`./install.sh --no-jetbrains` skips this; `claude-acct jetbrains-setup` does it later (for an IDE installed afterwards, say); `claude-acct uninstall` puts the previous setting back. Run `claude-acct doctor` from the IDE's terminal to check.
 
 ## How it works
 

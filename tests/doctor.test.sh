@@ -69,3 +69,22 @@ test_doctor_calls_a_logged_out_store_logged_out_not_broken() {
   assert_contains "$out" "logged out"
   assert_not_contains "$out" "FAIL  credentials"
 }
+
+test_doctor_tells_a_jetbrains_terminal_which_browser_to_set() {
+  "$ROOT/install.sh" --no-vscode >/dev/null
+  local out
+  out=$(TERMINAL_EMULATOR=JetBrains-JediTerm ca doctor 2>&1 || true)
+  assert_contains "$out" "claude-acct jetbrains-setup"
+  assert_contains "$out" "$ROOT/bin/claude-acct-browser"   # the command runs from the repo in tests
+  local opts
+  if [ "$CLAUDE_ACCT_PLATFORM" = Darwin ]; then
+    opts="$HOME/Library/Application Support/JetBrains/PhpStorm2025.3/options"
+  else
+    opts="$HOME/.config/JetBrains/PhpStorm2025.3/options"
+  fi
+  mkdir -p "$opts"
+  printf '<application><component name="GeneralSettings"><option name="browserPath" value="%s" /><option name="defaultBrowserPolicy" value="ALTERNATIVE" /></component></application>\n' \
+    "$XDG_DATA_HOME/claude-acct/app/bin/claude-acct-browser" >"$opts/ide.general.local.xml"
+  out=$(TERMINAL_EMULATOR=JetBrains-JediTerm ca doctor 2>&1 || true)
+  assert_contains "$out" "terminal JetBrains: Cmd+click"
+}

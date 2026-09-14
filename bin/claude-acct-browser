@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Claude Code opens links with "$BROWSER <url>"; claude-acct handles its own and passes the rest on.
+# Claude Code opens links with "$BROWSER <url>"; claude-acct handles its own and
+# passes the rest on. JetBrains IDEs can be pointed at this file as their browser
+# (Settings > Tools > Web Browsers and Preview > Default Browser > Custom path)
+# for the same effect from their terminal.
+# An IDE launched from the Dock may run this with a bare PATH; jq is usually here.
+PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:${HOME:-/}/.local/bin"
 src=${BASH_SOURCE[0]}
 while [ -L "$src" ]; do
   dir=$(cd -P "$(dirname "$src")" && pwd)

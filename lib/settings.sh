@@ -25,7 +25,7 @@ ca_settings_apply() {  # ca_settings_apply <app-dir>
     .[0] as $old | .[1] as $cur
     | (if ($old.originals | type) == "object" then $old.originals
        else {statusLine: $cur.statusLine, env: {BROWSER: $cur.env.BROWSER, FORCE_HYPERLINK: $cur.env.FORCE_HYPERLINK}} end) as $originals
-    | {version: 1, appDir: $app, settingsPath: $settings, originals: $originals, vscode: ($old.vscode // null),
+    | {version: 1, appDir: $app, settingsPath: $settings, originals: $originals, vscode: ($old.vscode // null), jetbrains: ($old.jetbrains // null),
        shellBrowser: (if ($old.shellBrowser // "") != "" then $old.shellBrowser
                       elif ($shell_browser | ours_browser | not) and $shell_browser != "" then $shell_browser
                       else null end)}') || return 1
@@ -125,6 +125,7 @@ ca_uninstall() {  # ca_uninstall [--purge]
   esac
   ca_settings_revert || ca_warn "could not restore settings.json; remove statusLine and env.BROWSER by hand"
   ca_vscode_uninstall
+  ca_jetbrains_revert
   if [ "$purge" = 1 ]; then
     for id in $(ca_index_read | jq -r '.accounts[].id') __backup__; do ca_vault_del "$id" || true; done
     rm -rf "$(ca_data_dir)"

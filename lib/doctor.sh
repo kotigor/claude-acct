@@ -63,6 +63,13 @@ ca_cmd_doctor() {
     ca_note "clicking needs fullscreen rendering; run /tui in Claude Code to check, /tui fullscreen to enable"
   fi
 
+  if [ "${TERMINAL_EMULATOR:-}" = JetBrains-JediTerm ]; then
+    if ca_jetbrains_configured; then
+      ca_ok "terminal JetBrains: Cmd+click (Ctrl+click on Linux), through the IDE's browser setting"
+    else
+      ca_note "the JetBrains terminal opens links itself; run once: claude-acct jetbrains-setup (or set Settings > Tools > Web Browsers and Preview > Default Browser > Custom path to $CA_APP/bin/claude-acct-browser)"
+    fi
+  fi
   case "${TERM_PROGRAM:-}" in
     ghostty | WarpTerminal) ca_ok "terminal $TERM_PROGRAM: plain click" ;;
     iTerm.app | WezTerm | kitty) ca_ok "terminal $TERM_PROGRAM: Cmd+click (Ctrl+click on Linux)" ;;

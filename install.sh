@@ -9,10 +9,12 @@ for f in "$here"/lib/*.sh; do
 done
 
 want_vscode=1
+want_jetbrains=1
 for arg in "$@"; do
   case "$arg" in
     --no-vscode) want_vscode=0 ;;
-    *) ca_die "usage: install.sh [--no-vscode]" ;;
+    --no-jetbrains) want_jetbrains=0 ;;
+    *) ca_die "usage: install.sh [--no-vscode] [--no-jetbrains]" ;;
   esac
 done
 
@@ -52,6 +54,10 @@ elif [ "${TERM_PROGRAM:-}" = vscode ]; then
   vscode_line="For clicks in the VS Code terminal, run once: claude-acct vscode-setup"
 fi
 [ -z "$vscode_line" ] || printf '%s\n' "$vscode_line"
+# JetBrains terminals open links in the browser the IDE is set to use: make that us.
+if [ "$want_jetbrains" = 1 ] && [ -n "$(ca_jetbrains_files)" ]; then
+  CA_APP=$app ca_cmd_jetbrains_setup || echo "JetBrains IDEs found, but their setting could not be written; run by hand: claude-acct jetbrains-setup"
+fi
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
   *) printf 'Add %s to your PATH to use the claude-acct command.\n' "$HOME/.local/bin" ;;

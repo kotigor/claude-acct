@@ -90,3 +90,10 @@ test_installed_status_line_command_runs_from_a_path_with_spaces() {
   cmd=$(settings_json | jq -r .statusLine.command)
   assert_contains "$(printf '{}' | sh -c "$cmd")" "＋ save"
 }
+
+test_a_sub_second_refresh_interval_is_raised_to_one() {
+  mkdir -p "$HOME/.claude"
+  printf '{"statusLine":{"type":"command","command":"echo hi","refreshInterval":0}}' >"$HOME/.claude/settings.json"
+  install_it
+  assert_eq "$(settings_json | jq -r .statusLine.refreshInterval)" "1"
+}

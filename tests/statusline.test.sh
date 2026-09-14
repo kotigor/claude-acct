@@ -155,3 +155,26 @@ test_the_controls_are_on_their_own_row() {
   assert_not_contains "$controls" "＋"
   assert_not_contains "$controls" "bob@example.com"
 }
+
+test_a_multi_line_original_status_line_runs_intact() {
+  cc_login alice
+  ca save >/dev/null
+  mkdir -p "$XDG_DATA_HOME/claude-acct"
+  jq -n '{originals: {statusLine: {type: "command", command: "echo first\necho second"}}}' \
+    >"$XDG_DATA_HOME/claude-acct/install.json"
+  local out
+  out=$(printf '{}' | ca statusline | strip_style)
+  assert_eq "$(printf '%s\n' "$out" | sed -n 1,2p | tr '\n' ' ')" "first second "
+  assert_contains "$(printf '%s\n' "$out" | row_accounts)" "● alice@example.com"
+  # nothing of the command leaked into the state files
+  [ ! -f "$XDG_DATA_HOME/claude-acct/ratelimits.json" ] || jq -e . "$XDG_DATA_HOME/claude-acct/ratelimits.json" >/dev/null
+}
+
+test_the_original_status_line_gets_a_newline_terminated_input() {
+  cc_login alice
+  ca save >/dev/null
+  mkdir -p "$XDG_DATA_HOME/claude-acct"
+  jq -n '{originals: {statusLine: {type: "command", command: "set -e; read -r line; echo \"got ${#line}\""}}}' \
+    >"$XDG_DATA_HOME/claude-acct/install.json"
+  assert_eq "$(printf '{"a":1}' | ca statusline | strip_style | head -n 1)" "got 7"
+}

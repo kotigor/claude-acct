@@ -32,3 +32,10 @@ test_data_dir_is_private() {
   ca_lib ca_ensure_data_dir
   assert_eq "$(ca_lib ca_file_mode "$XDG_DATA_HOME/claude-acct" 0)" "700"
 }
+
+test_log_never_fails_even_when_it_cannot_write() {
+  ca_lib ca_ensure_data_dir
+  chmod 500 "$XDG_DATA_HOME/claude-acct"
+  ca_lib ca_log "hello" || fail "ca_log failed instead of giving up quietly"
+  chmod 700 "$XDG_DATA_HOME/claude-acct"
+}

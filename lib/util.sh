@@ -57,10 +57,12 @@ ca_lock() {  # serialise state-changing commands; released when the process exit
 
 ca_log() {  # ca_log <message>: append to the log in the data dir; never pass secrets
   local f
-  ca_ensure_data_dir
-  f="$(ca_data_dir)/claude-acct.log"
-  if [ -f "$f" ] && [ "$(($(wc -c <"$f")))" -gt 200000 ]; then mv -f "$f" "$f.1"; fi
-  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$f"
+  {
+    ca_ensure_data_dir
+    f="$(ca_data_dir)/claude-acct.log"
+    if [ -f "$f" ] && [ "$(($(wc -c <"$f")))" -gt 200000 ]; then mv -f "$f" "$f.1"; fi
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$f"
+  } 2>/dev/null || true  # a log that cannot be written must never stop the real work
 }
 
 ca_notify() {  # ca_notify <title> <message>: desktop notification, best effort

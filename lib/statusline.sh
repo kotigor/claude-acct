@@ -40,7 +40,7 @@ ca_style() {  # ca_style <active|off>
 # The jq program. Inputs: $session (raw text), $index, $rl, $ui, $inst, $gc (each a
 # one-element array from --slurpfile or a fallback), $now, $columns, $auto_seconds,
 # $auto_enabled, $base, $s_active, $s_off.
-# Output, one string per line: the user's own status line command (or empty),
+# Output, one string per line: the user's own status line command as a JSON string,
 # 1/0 whether a background limits refresh is due, the updated ratelimits state as
 # JSON (or "-" when unchanged), then the rows to print (none when logged out).
 # shellcheck disable=SC2016  # a jq program: the $names are jq variables, not shell
@@ -113,7 +113,7 @@ CA_STATUSLINE_JQ='
      elif $columns > 0 and (row($rows; false).plain | length) > ($columns - 2) then true
      else false end) as $short
 
-  | $orig, (if $due then "1" else "0" end), (if $obs.state then ($obs.state | tojson) else "-" end),
+  | ($orig | @json), (if $due then "1" else "0" end), (if $obs.state then ($obs.state | tojson) else "-" end),
     (if $key == null then empty else
        row($rows; $short).styled,
        ([link("\($base)/" + (if $short then "expand" else "collapse" end);
@@ -147,12 +147,16 @@ ca_cmd_statusline() {
   { IFS= read -r orig; IFS= read -r due; IFS= read -r state; rows=$(cat); } <<EOF
 $out
 EOF
-  if [ -n "$orig" ]; then
-    out=$(printf '%s' "$input" | sh -c "$orig" 2>/dev/null || true)
-    [ -z "$out" ] || printf '%s\n' "$out"
+  if [ "$orig" != '""' ]; then
+    # Decoded here so a command spanning several lines cannot shift the fields above.
+    orig=$(printf '%s' "$orig" | jq -r . 2>/dev/null) || orig=""
+    if [ -n "$orig" ]; then
+      out=$(printf '%s\n' "$input" | sh -c "$orig" 2>/dev/null || true)
+      [ -z "$out" ] || printf '%s\n' "$out"
+    fi
   fi
   [ -z "$rows" ] || printf '%s\n' "$rows"
-  if [ "$state" != "-" ]; then
+  if [ "$state" != "-" ] && printf '%s' "$state" | jq -e . >/dev/null 2>&1; then
     { ca_ensure_data_dir && printf '%s\n' "$state" | ca_write_atomic "$data/ratelimits.json" 600; } 2>/dev/null || true
   fi
   # Keep the numbers current even while the user is idle waiting for a reset.

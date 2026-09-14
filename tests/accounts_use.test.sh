@@ -72,6 +72,8 @@ test_use_rolls_back_when_the_write_does_not_stick__darwin() {
   unset FAKE_SECURITY_IGNORE_WRITES_FOR
   assert_eq "$(live_rt)" "rt-bob"
   assert_eq "$(live_email)" "bob@example.com"
+  # the backup was written before the attempt, so "claude-acct restore" means this switch
+  assert_eq "$(ca_lib ca_vault_get __backup__ | jq -r .oauthAccount.emailAddress)" "bob@example.com"
 }
 
 test_use_works_after_logout() {
@@ -111,4 +113,24 @@ test_click_path_with_unexpected_credentials_changes_nothing() {
   ca open-url "http://claude-acct.localhost/use/33084eab" 2>/dev/null || true
   assert_eq "$(cc_store_get)" "$before"
   assert_eq "$(live_email)" "bob@example.com"
+}
+
+test_restore_after_a_switch_from_logged_out_leaves_no_stale_account() {
+  two_accounts
+  cc_store_get | jq -c 'del(.claudeAiOauth, .trustedDeviceToken)' | cc_store_put
+  jq 'del(.oauthAccount)' "$(gc_path)" >"$(gc_path).tmp" && mv "$(gc_path).tmp" "$(gc_path)"
+  ca use alice@example.com >/dev/null
+  ca restore >/dev/null
+  assert_eq "$(jq -r '.oauthAccount // "none"' "$(gc_path)")" "none"
+  assert_eq "$(cc_store_get | jq -r '.claudeAiOauth // "none"')" "none"
+  # and switching again really switches instead of "Already using"
+  assert_contains "$(ca use alice@example.com)" "Switched to alice@example.com"
+  assert_eq "$(live_rt)" "rt-alice"
+}
+
+test_use_does_not_trust_a_config_whose_tokens_are_gone() {
+  two_accounts
+  cc_store_get | jq -c 'del(.claudeAiOauth)' | cc_store_put   # config still says bob
+  assert_contains "$(ca use bob@example.com)" "Switched to bob@example.com"
+  assert_eq "$(live_rt)" "rt-bob"
 }

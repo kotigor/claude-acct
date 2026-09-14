@@ -32,7 +32,7 @@ ca_settings_apply() {  # ca_settings_apply <app-dir>
     | .[0]
     | .statusLine = ({type: "command",
                       command: (($app + "/bin/claude-acct" | @sh) + " statusline"),
-                      refreshInterval: ([10, ($o.statusLine.refreshInterval // 10)] | min)}
+                      refreshInterval: ([[10, ($o.statusLine.refreshInterval // 10)] | min, 1] | max)}
                      + (if $o.statusLine.padding != null then {padding: $o.statusLine.padding} else {} end))
     | .env = ((.env // {}) + {BROWSER: ($app + "/bin/claude-acct-browser"), FORCE_HYPERLINK: "1"})') || return 1
 

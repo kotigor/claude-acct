@@ -20,6 +20,14 @@ ca_active_id() {  # id of the account Claude Code is logged in as
   ca_account_id "$(printf '%s' "$acct" | ca_account_key)"
 }
 
+ca_gconfig_clear_account() {  # forget who is logged in (what /logout leaves behind)
+  local f new
+  f=$(ca_global_config_path)
+  [ -f "$f" ] || return 0
+  new=$(jq 'del(.oauthAccount)' "$f") || return 1
+  printf '%s\n' "$new" | ca_write_atomic "$f" "$(ca_file_mode "$f" 600)"
+}
+
 ca_gconfig_set_account() {  # oauthAccount on stdin
   local f acct new
   f=$(ca_global_config_path)

@@ -82,9 +82,14 @@ ca_apply() {
   if printf '%s' "$new" | ca_store_write &&
     got=$(ca_store_read | jq -r '.claudeAiOauth.refreshToken // empty') &&
     [ "$got" = "$want" ]; then
-    acct=$(printf '%s' "$2" | jq -c '.oauthAccount')
+    acct=$(printf '%s' "$2" | jq -c '.oauthAccount // null')
     if [ "$acct" != null ]; then
       printf '%s' "$acct" | ca_gconfig_set_account ||
+        ca_warn "could not update $(ca_global_config_path); Claude Code refreshes it on its next start"
+    else
+      # The record is a logged-out state: the config must not keep naming an account
+      # whose tokens are gone, or the next switch to it would think it is already active.
+      ca_gconfig_clear_account ||
         ca_warn "could not update $(ca_global_config_path); Claude Code refreshes it on its next start"
     fi
     return 0
@@ -119,7 +124,7 @@ ca_cmd_use() {  # use <account>
   else
     acct=null
   fi
-  if [ "$cur_id" = "$id" ]; then
+  if [ "$cur_id" = "$id" ] && printf '%s' "$live" | jq -e 'has("claudeAiOauth")' >/dev/null 2>&1; then
     printf 'Already using %s (%s)\n' "$(ca_index_label "$id")" "$id"
     return 0
   fi
@@ -147,14 +152,14 @@ ca_cmd_use() {  # use <account>
     ca_warn "the account you are leaving is not saved; to keep it, /login to it and click ＋ save"
   fi
 
+  # The backup goes first, so a failed rollback can still point at it.
+  printf '%s\n%s\n' "$live" "$acct" | ca_vault_record | ca_vault_put __backup__ ||
+    ca_die "could not write the backup; nothing was switched"
   ca_apply "$live" "$saved" || ca_die "switch failed; the previous login is still active"
   ca_log "use $id (was ${cur_id:-none})"
   printf 'Switched to %s (%s)\n' "$(ca_index_label "$id")" "$id"
 
-  # Bookkeeping that nothing above depends on: the backup for `restore` (the data is
-  # still in hand) and the index entry of the account just left.
-  printf '%s\n%s\n' "$live" "$acct" | ca_vault_record | ca_vault_put __backup__ ||
-    ca_warn 'could not write the backup; "claude-acct restore" will not know this switch'
+  # Bookkeeping nothing above depends on: the index entry of the account just left.
   if [ -n "$cur_id" ] && [ "$acct" != null ] && ca_index_get "$cur_id" >/dev/null 2>&1; then
     ca_index_upsert "$(printf '%s\n%s\n' "$live" "$acct" |
       ca_index_entry "$cur_id" "$(printf '%s' "$acct" | ca_account_key)" "")" || true

@@ -34,6 +34,7 @@ Usage: claude-acct <command>
   restore                   undo the last switch
   refresh [account ...]     ask Anthropic for the current limits of each account
   doctor                    check the setup
+  vscode-setup              make the links work in the VS Code terminal (installs a tiny extension)
   uninstall [--purge]       remove claude-acct (--purge also deletes saved accounts)
   version
 
@@ -52,6 +53,7 @@ case "$cmd" in
   restore) ca_cmd_restore ;;
   refresh) ca_cmd_refresh "$@" ;;
   doctor) ca_cmd_doctor ;;
+  vscode-setup) ca_cmd_vscode_setup "$@" ;;
   statusline) ca_cmd_statusline 2>/dev/null || true ;;
   round) ca_cmd_round "$@" ;;
   open-url) ca_cmd_open_url "$@" ;;

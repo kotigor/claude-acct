@@ -8,6 +8,14 @@ for f in "$here"/lib/*.sh; do
   . "$f"
 done
 
+want_vscode=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-vscode) want_vscode=0 ;;
+    *) ca_die "usage: install.sh [--no-vscode]" ;;
+  esac
+done
+
 command -v jq >/dev/null 2>&1 ||
   ca_die "jq is required (macOS 15+ includes it; otherwise: brew install jq, or sudo apt install jq)"
 case "$(ca_platform)" in
@@ -20,7 +28,7 @@ app="$(ca_data_dir)/app"
 ca_ensure_data_dir
 rm -rf "$app.new"
 mkdir -p "$app.new"
-cp -R "$here/bin" "$here/lib" "$here/VERSION" "$app.new/"
+cp -R "$here/bin" "$here/lib" "$here/vscode" "$here/VERSION" "$app.new/"
 chmod 755 "$app.new/bin/claude-acct" "$app.new/bin/claude-acct-browser"
 rm -rf "$app"
 mv "$app.new" "$app"
@@ -31,6 +39,19 @@ ln -sfn "$app/bin/claude-acct" "$HOME/.local/bin/claude-acct"
 ca_settings_apply "$app"
 
 printf 'claude-acct %s installed.\n' "$(cat "$app/VERSION")"
+# VS Code's terminal opens links by itself; its extension makes them reach claude-acct.
+# Set up whenever VS Code is on this machine; --no-vscode leaves it alone.
+vscode_line=""
+if [ "$want_vscode" = 1 ] && ca_vscode_cli >/dev/null 2>&1; then
+  if CA_APP=$app ca_cmd_vscode_setup >/dev/null 2>&1; then
+    vscode_line="VS Code found: its extension is installed too, so clicks work in its terminal (reload open windows)."
+  else
+    vscode_line="VS Code found, but its extension could not be installed; run by hand: claude-acct vscode-setup"
+  fi
+elif [ "${TERM_PROGRAM:-}" = vscode ]; then
+  vscode_line="For clicks in the VS Code terminal, run once: claude-acct vscode-setup"
+fi
+[ -z "$vscode_line" ] || printf '%s\n' "$vscode_line"
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
   *) printf 'Add %s to your PATH to use the claude-acct command.\n' "$HOME/.local/bin" ;;

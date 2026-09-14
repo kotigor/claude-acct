@@ -141,6 +141,16 @@ CA_STATUSLINE_JQ='
      end)
 '
 
+# ca_link_base: where the links point. VS Code opens terminal links itself; once
+# its extension is set up, the links go through that instead (see vscode.sh).
+ca_link_base() {
+  if [ "${TERM_PROGRAM:-}" = vscode ] && [ -n "$(ca_vscode_version)" ]; then
+    printf '%s' "$CA_VSCODE_URL_BASE"
+  else
+    printf '%s' "$CA_URL_BASE"
+  fi
+}
+
 ca_cmd_statusline() {
   local input now data out orig due patch active rows
   input=$(cat)
@@ -158,7 +168,7 @@ ca_cmd_statusline() {
   done
   out=$(jq -rn "$@" --arg session "$input" --argjson now "$now" --argjson columns "${COLUMNS:-0}" \
     --argjson auto_seconds "$CA_USAGE_AUTO_SECONDS" --argjson stale_seconds "$CA_RL_STALE_SECONDS" \
-    --arg base "$CA_URL_BASE" --arg s_active "$(ca_style active)" --arg s_off "$(ca_style off)" \
+    --arg base "$(ca_link_base)" --arg s_active "$(ca_style active)" --arg s_off "$(ca_style off)" \
     "$CA_STATUSLINE_JQ" 2>/dev/null) || return 0
   { IFS= read -r orig; IFS= read -r due; IFS= read -r patch; IFS= read -r active; rows=$(cat); } <<EOF
 $out

@@ -19,7 +19,7 @@ claude-acct is for people who pay for more than one Claude subscription themselv
 
 - Claude Code with **fullscreen rendering** (`/tui fullscreen`): clicks in the status line only work there.
 - macOS, or Linux/WSL, with bash and `jq` (macOS 15+ ships `jq`).
-- A terminal in which Claude Code handles link clicks: Ghostty and Warp (plain click), iTerm2, kitty, WezTerm (Cmd+click). In the VS Code terminal, use the CLI.
+- A terminal in which Claude Code handles link clicks: Ghostty and Warp (plain click), iTerm2, kitty, WezTerm (Cmd+click). The VS Code terminal opens links by itself; the installer adds a tiny extension for it (see below).
   Warp shows a URL tooltip over every link; to hide it, add `link_tooltip = false` under `[general]` in `~/.warp/settings.toml` (hot-reloaded, no restart).
 
 ## Install
@@ -56,6 +56,12 @@ claude-acct rename work@example.com work
 claude-acct rm work
 claude-acct doctor
 ```
+
+## VS Code
+
+VS Code's terminal opens clicked links itself (Cmd+click, Ctrl+click on Linux) and sends `localhost` links to its built-in browser, so Claude Code never hands them to `$BROWSER` there. The installer handles it: when VS Code is on the machine, `install.sh` also builds a tiny extension (`kotigor.claude-acct`, one file: it receives `vscode://kotigor.claude-acct/...` links and passes them to `claude-acct open-url`) and installs it with VS Code's `code` command; the status line then links through that scheme whenever it runs inside VS Code. Reload open windows afterwards; the first click asks whether the extension may open the link.
+
+`./install.sh --no-vscode` skips this; `claude-acct vscode-setup` does it later; `claude-acct uninstall` removes the extension too. If `code` is not on your PATH, install it from the Command Palette ("Shell Command: Install 'code' command in PATH") or point `CLAUDE_ACCT_CODE_CLI` at it.
 
 ## How it works
 

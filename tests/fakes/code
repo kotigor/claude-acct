@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Fake VS Code command: records what it is asked and pretends to install.
+# FAKE_VSIX_COPY names where an installed .vsix is copied for the test to inspect.
+set -euo pipefail
+printf 'code argv=%s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
+case "${1:-}" in
+  --version) printf '1.137.0\n' ;;
+  --install-extension)
+    [ -f "${2:-}" ] || { echo "not found: ${2:-}" >&2; exit 1; }
+    [ -z "${FAKE_VSIX_COPY:-}" ] || cp "$2" "$FAKE_VSIX_COPY"
+    echo "Extension '$2' was successfully installed." ;;
+  --uninstall-extension) echo "Extension '${2:-}' was successfully uninstalled!" ;;
+esac

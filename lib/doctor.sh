@@ -66,7 +66,12 @@ ca_cmd_doctor() {
   case "${TERM_PROGRAM:-}" in
     ghostty | WarpTerminal) ca_ok "terminal $TERM_PROGRAM: plain click" ;;
     iTerm.app | WezTerm | kitty) ca_ok "terminal $TERM_PROGRAM: Cmd+click (Ctrl+click on Linux)" ;;
-    vscode) ca_note "the VS Code terminal opens links itself; switch with: claude-acct use <account>" ;;
+    vscode)
+      if [ -n "$(ca_vscode_version)" ]; then
+        ca_ok "terminal vscode: Cmd+click (Ctrl+click on Linux), through the $CA_VSCODE_EXT_ID extension"
+      else
+        ca_note "the VS Code terminal opens links itself; run once: claude-acct vscode-setup"
+      fi ;;
     "") ca_note "terminal unknown; run inside Claude Code as: ! claude-acct doctor" ;;
     *) ca_note "terminal $TERM_PROGRAM: untested; try Cmd+click or Ctrl+click" ;;
   esac

@@ -10,6 +10,44 @@ test_install_copies_app_and_links_command() {
   [ -x "$XDG_DATA_HOME/claude-acct/app/bin/claude-acct-browser" ]
 }
 
+# What GitHub serves as the repository's tarball, built from this checkout.
+repo_tarball() {
+  mkdir -p "$T/src/claude-acct-main"
+  cp -R "$ROOT/bin" "$ROOT/lib" "$ROOT/vscode" "$ROOT/VERSION" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$T/src/claude-acct-main/"
+  tar -czf "$T/claude-acct-main.tar.gz" -C "$T/src" claude-acct-main
+  rm -rf "$T/src"
+}
+
+test_install_piped_in_downloads_the_repository() {
+  repo_tarball
+  mkdir "$T/tmp"
+  TMPDIR="$T/tmp" FAKE_TARBALL="$T/claude-acct-main.tar.gz" bash -s -- --no-vscode <"$ROOT/install.sh" >/dev/null
+  assert_eq "$("$HOME/.local/bin/claude-acct" version)" "$(cat "$ROOT/VERSION")"
+  assert_contains "$(cat "$FAKE_LOG")" "curl download=https://github.com/kotigor/claude-acct/archive/refs/heads/main.tar.gz"
+  assert_contains "$(settings_json)" "claude-acct/app/bin/claude-acct"
+  assert_eq "$(ls -A "$T/tmp")" ""   # the download is cleaned up
+}
+
+test_install_piped_in_stops_when_the_download_fails() {
+  mkdir "$T/tmp"
+  local out
+  if out=$(TMPDIR="$T/tmp" FAKE_TARBALL="$T/missing.tar.gz" bash <"$ROOT/install.sh" 2>&1); then
+    fail "expected the install to fail"
+  fi
+  assert_contains "$out" "could not download"
+  [ ! -e "$XDG_DATA_HOME/claude-acct/app" ] || fail "nothing should be installed"
+  [ ! -e "$HOME/.claude/settings.json" ] || fail "settings should be untouched"
+  assert_eq "$(ls -A "$T/tmp")" ""
+}
+
+test_install_piped_into_another_shell_asks_for_bash() {
+  command -v dash >/dev/null 2>&1 || return 0   # macOS has no plain POSIX shell to try
+  local out
+  if out=$(dash <"$ROOT/install.sh" 2>&1); then fail "expected dash to be turned away"; fi
+  assert_contains "$out" "run the installer with bash"
+  [ ! -e "$XDG_DATA_HOME/claude-acct/app" ] || fail "nothing should be installed"
+}
+
 test_install_sets_status_line_and_browser() {
   install_it
   local app="$XDG_DATA_HOME/claude-acct/app"

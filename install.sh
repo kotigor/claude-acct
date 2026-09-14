@@ -1,6 +1,27 @@
 #!/usr/bin/env bash
-# Install or upgrade claude-acct for the current user.
+# Install or upgrade claude-acct for the current user, from a checkout or on its own:
+#   curl -fsSL https://raw.githubusercontent.com/kotigor/claude-acct/main/install.sh | bash
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "claude-acct: run the installer with bash: curl -fsSL https://raw.githubusercontent.com/kotigor/claude-acct/main/install.sh | bash" >&2
+  exit 1
+fi
 set -euo pipefail
+
+# Piped in, with no checkout around it: download one and run its installer.
+# Bash reads this whole block before running any of it, so a download cut short
+# does nothing.
+if [ ! -f "${BASH_SOURCE[0]:-}" ]; then
+  command -v curl >/dev/null 2>&1 || { echo "claude-acct: curl is required" >&2; exit 1; }
+  command -v tar >/dev/null 2>&1 || { echo "claude-acct: tar is required" >&2; exit 1; }
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/claude-acct.XXXXXX")
+  trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL -o "$tmp/claude-acct.tar.gz" https://github.com/kotigor/claude-acct/archive/refs/heads/main.tar.gz ||
+    { echo "claude-acct: could not download https://github.com/kotigor/claude-acct" >&2; exit 1; }
+  mkdir "$tmp/src"
+  tar -xzf "$tmp/claude-acct.tar.gz" -C "$tmp/src" --strip-components 1
+  bash "$tmp/src/install.sh" "$@"
+  exit 0
+fi
 
 here=$(cd "$(dirname "$0")" && pwd)
 for f in "$here"/lib/*.sh; do

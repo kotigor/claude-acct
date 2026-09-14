@@ -25,6 +25,12 @@ claude-acct is for people who pay for more than one Claude subscription themselv
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/kotigor/claude-acct/main/install.sh | bash
+```
+
+This downloads the repository into a temporary directory and runs its `install.sh`; run it again to upgrade. Pass options after `bash -s --`, for example `| bash -s -- --no-vscode`. From a clone, the same:
+
+```sh
 git clone https://github.com/kotigor/claude-acct.git
 cd claude-acct
 ./install.sh

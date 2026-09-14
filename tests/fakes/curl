@@ -9,6 +9,22 @@
 # renew_<refresh token>.code file makes the token endpoint answer that status.
 set -euo pipefail
 
+# The installer's own download (curl -fsSL -o <file> <url>): copies $FAKE_TARBALL,
+# or fails the way curl -f does on a 404 when there is none.
+case " $* " in
+  *"/archive/"*".tar.gz "*)
+    out="" prev="" url=""
+    for a in "$@"; do
+      [ "$prev" = -o ] && out=$a
+      case "$a" in https://*) url=$a ;; esac
+      prev=$a
+    done
+    printf 'curl download=%s\n' "$url" >>"${FAKE_LOG:-/dev/null}"
+    [ -f "${FAKE_TARBALL:-/nonexistent}" ] || exit 22
+    cp "$FAKE_TARBALL" "$out"
+    exit 0 ;;
+esac
+
 config=""
 case " $* " in *" -K - "* | *" --config - "*) config=$(cat) ;; esac
 

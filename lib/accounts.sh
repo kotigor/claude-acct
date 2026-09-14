@@ -159,7 +159,7 @@ ca_switch_to() {
   if [ "${CA_USAGE_SYNC:-0}" = 1 ]; then
     ca_usage_refresh --if-older-than "$CA_USAGE_FRESH_SECONDS" >/dev/null 2>&1 || true
   else
-    (ca_usage_refresh --if-older-than "$CA_USAGE_FRESH_SECONDS" >/dev/null 2>&1) >/dev/null 2>&1 </dev/null &
+    "$(ca_self)" round switch >/dev/null 2>&1 </dev/null &
   fi
   return 0
 }

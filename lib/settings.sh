@@ -43,7 +43,13 @@ ca_settings_apply() {  # ca_settings_apply <app-dir>
   printf '%s\n' "$new" | ca_write_atomic "$settings" "$(ca_file_mode "$settings" 644)"
 }
 
-ca_now_ms() {
+ca_now_ms() {  # milliseconds since the epoch; whole seconds when nothing finer is at hand
+  local ns
+  ns=$(date +%s%N 2>/dev/null)   # GNU date and recent macOS; older BSD date prints the N
+  case "$ns" in
+    *[!0-9]* | '') ;;
+    *) if [ "${#ns}" -ge 16 ]; then printf '%s' "${ns%??????}"; return; fi ;;
+  esac
   perl -MTime::HiRes=time -e 'printf "%.0f", time * 1000' 2>/dev/null || printf '%s000' "$(date +%s)"
 }
 
@@ -67,10 +73,13 @@ ca_settings_poke() {
     [ "$tries" -lt 40 ] || return 0
     sleep 0.05
   done
-  # Only our own status line is touched; nothing else in the file changes.
-  new=$(jq -e --arg tick "$(ca_now_ms)" '
+  # Only our own status line is touched; nothing else in the file changes. The
+  # tick is at least one more than the last, whatever the clock's resolution.
+  new=$(jq -e --arg now "$(ca_now_ms)" '
     if ((.statusLine.command // "") | test("claude-acct.*statusline")) then
-      .statusLine.command |= (sub(" --tick [0-9]+$"; "") + " --tick " + $tick)
+      ((.statusLine.command | capture(" --tick (?<t>[0-9]+)$").t // "0" | tonumber) + 1) as $next
+      | ([($now | tonumber), $next] | max | tostring) as $tick
+      | .statusLine.command |= (sub(" --tick [0-9]+$"; "") + " --tick " + $tick)
     else empty end' "$settings" 2>/dev/null) &&
     printf '%s\n' "$new" | ca_write_atomic "$settings" "$(ca_file_mode "$settings" 644)" && ca_log "poke"
   rmdir "$lock" 2>/dev/null || true

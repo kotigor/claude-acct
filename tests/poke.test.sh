@@ -172,3 +172,16 @@ test_a_click_pokes_exactly_once_and_before_any_read() {
   fi
   awk -v p="$poke" -v c="$creds" 'BEGIN { exit !(p < c) }' || fail "the poke ($poke) came after the credential write ($creds)"
 }
+
+test_a_poke_grows_even_when_the_clock_stands_still() {
+  install_it
+  local a b
+  # a clock stuck at one value, like a date without milliseconds inside one second
+  stuck_poke() {
+    bash -c 'set -euo pipefail; for f in "$0"/lib/*.sh; do . "$f"; done; ca_now_ms() { printf 1000; }; ca_settings_poke' "$ROOT"
+  }
+  stuck_poke; a=$(cmd)
+  stuck_poke; b=$(cmd)
+  assert_contains "$a" " --tick 1000"
+  assert_contains "$b" " --tick 1001"
+}

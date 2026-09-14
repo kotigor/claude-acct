@@ -179,6 +179,50 @@ test_the_original_status_line_gets_a_newline_terminated_input() {
   assert_eq "$(printf '{"a":1}' | ca statusline | strip_style | head -n 1)" "got 7"
 }
 
+test_leftovers_are_recognised_by_their_windows_even_when_never_recorded() {
+  two_accounts
+  local now r5 r7
+  now=$(date +%s); r5=$((now + 9000)); r7=$((now + 302400))
+  # bob s windows are known from the endpoint; his numbers changed right before the
+  # click, so no status line ever recorded that last signature
+  # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
+  ca_lib ca_rl_update '.accounts["a1eeea2a"] = {five_hour: {used_percentage: 30, resets_at: $r5}, seven_day: {used_percentage: 20, resets_at: $r7}, fetchedAt: $now, source: "api"}' \
+    --argjson r5 "$r5" --argjson r7 "$r7" --argjson now "$now" >/dev/null
+  ca use alice@example.com >/dev/null
+  # the session and the endpoint round the same reset time a second apart
+  session 33 $((r5 - 1)) 28 $((r7 + 1)) | ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour // "none"')" "none"
+  # alice s own windows differ: hers are recorded
+  session 2 $((now + 19800)) 1 $((now + 388800)) | ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "2"
+}
+
+test_a_quick_switch_back_and_forth_files_nothing_under_the_wrong_account() {
+  two_accounts
+  local now
+  now=$(date +%s)
+  session 33 $((now + 9000)) 28 $((now + 302400)) | ca statusline >/dev/null   # bob s own numbers
+  ca use alice@example.com >/dev/null
+  session 33 $((now + 9000)) 28 $((now + 302400)) | ca statusline >/dev/null   # still bob s
+  ca use bob@example.com >/dev/null
+  session 33 $((now + 9000)) 28 $((now + 302400)) | ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour // "none"')" "none"
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["a1eeea2a"].five_hour.used_percentage')" "33"
+}
+
+test_a_login_by_hand_is_a_switch_too() {
+  two_accounts
+  local now
+  now=$(date +%s)
+  session 40 $((now + 9000)) 12 $((now + 302400)) | ca statusline >/dev/null   # bob s numbers
+  cc_login alice   # /login by hand: nothing recorded a switch
+  session 40 $((now + 9000)) 12 $((now + 302400)) | ca statusline >/dev/null   # still bob s
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour // "none"')" "none"
+  session 3 $((now + 12000)) 1 $((now + 400000)) | ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "3"
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["a1eeea2a"].five_hour.used_percentage')" "40"
+}
+
 test_only_the_previous_account_s_last_numbers_count_as_leftovers() {
   two_accounts
   local now
@@ -188,11 +232,11 @@ test_only_the_previous_account_s_last_numbers_count_as_leftovers() {
     ca statusline >/dev/null
   session 50 $((now + 9000)) 10 $((now + 302400)) | ca statusline >/dev/null
   ca use alice@example.com >/dev/null
-  # the very same 0/0 from alice is her own, not a leftover
+  # the first numbers after the switch are bob s leftovers (50/10) ...
+  session 50 $((now + 9000)) 10 $((now + 302400)) | ca statusline >/dev/null
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour // "none"')" "none"
+  # ... and the very same 0/0 bob once showed is, when it comes next, alice s own
   printf '{"rate_limits":{"five_hour":{"used_percentage":0,"resets_at":null},"seven_day":{"used_percentage":0,"resets_at":null}}}' |
     ca statusline >/dev/null
-  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "0"
-  # while bob s actual leftovers are still recognised
-  session 50 $((now + 9000)) 10 $((now + 302400)) | ca statusline >/dev/null
   assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "0"
 }

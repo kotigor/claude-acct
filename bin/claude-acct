@@ -53,6 +53,7 @@ case "$cmd" in
   refresh) ca_cmd_refresh "$@" ;;
   doctor) ca_cmd_doctor ;;
   statusline) ca_cmd_statusline 2>/dev/null || true ;;
+  round) ca_cmd_round "$@" ;;
   open-url) ca_cmd_open_url "$@" ;;
   uninstall) ca_uninstall "$@" ;;
   version | --version | -v) cat "$CA_APP/VERSION" ;;

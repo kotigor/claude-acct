@@ -12,7 +12,8 @@
 # sent and no quota is consumed.
 
 CA_USAGE_URL='https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1'
-CA_USAGE_TIMEOUT=6
+CA_USAGE_CONNECT_TIMEOUT=4
+CA_USAGE_TIMEOUT=8
 # shellcheck disable=SC2034  # used by accounts.sh
 CA_USAGE_FRESH_SECONDS=60   # a switch reuses an answer this new instead of asking again
 CA_USAGE_AUTO_SECONDS=300   # Claude Code's own cache for these numbers is 5 minutes too
@@ -32,33 +33,51 @@ ca_usage_normalize() {  # stdin: endpoint response -> {five_hour, seven_day} in 
 }
 
 # ca_usage_get <access-token>: prints the normalized limits, or one of the
-# failure words (expired, unreachable, unexpected) on stderr and fails.
+# failure words (expired, throttled, unreachable, unexpected) on stderr and fails.
+# A connection that stalls, or a gateway hiccup, is tried once more.
 ca_usage_get() {
-  local reply code body
-  # The url and headers go in on stdin (curl -K -) so the token stays out of argv.
-  reply=$(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\nheader = "anthropic-beta: %s"\nheader = "Content-Type: application/json"\n' \
-    "$CA_USAGE_URL" "$1" "oauth-2025-04-20" |
-    curl -sS -K - --max-time "$CA_USAGE_TIMEOUT" -w '\n%{http_code}' 2>/dev/null) || {
-    echo unreachable >&2
-    return 1
-  }
-  code=$(printf '%s' "$reply" | tail -n 1)
-  body=$(printf '%s' "$reply" | sed '$d')
-  case "$code" in
-    200) printf '%s' "$body" | ca_usage_normalize || { echo unexpected >&2; return 1; } ;;
-    401 | 403) echo expired >&2; return 1 ;;
-    *) echo unreachable >&2; return 1 ;;
-  esac
+  local reply code body attempt=0
+  while :; do
+    attempt=$((attempt + 1))
+    # The url and headers go in on stdin (curl -K -) so the token stays out of argv.
+    if reply=$(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\nheader = "anthropic-beta: %s"\nheader = "Content-Type: application/json"\nheader = "User-Agent: %s"\n' \
+        "$CA_USAGE_URL" "$1" "oauth-2025-04-20" "$(ca_user_agent)" |
+        curl -sS -K - --connect-timeout "$CA_USAGE_CONNECT_TIMEOUT" --max-time "$CA_USAGE_TIMEOUT" \
+          -w '\n%{http_code}' 2>/dev/null); then
+      code=$(printf '%s' "$reply" | tail -n 1)
+      body=$(printf '%s' "$reply" | sed '$d')
+      case "$code" in
+        200) printf '%s' "$body" | ca_usage_normalize || { echo unexpected >&2; return 1; }; return 0 ;;
+        401 | 403) echo expired >&2; return 1 ;;
+        429) echo throttled >&2; return 1 ;;   # also what an expired token gets
+      esac
+    fi
+    [ "$attempt" -lt 2 ] || { echo unreachable >&2; return 1; }
+  done
 }
 
-ca_usage_token() {  # ca_usage_token <id>: that account's access token
-  local active
+# ca_usage_token <id>: that account's access token, renewing a saved account's
+# expired login first. Prints the failure word on stderr and fails otherwise.
+ca_usage_token() {
+  local active record why attempt=0
   active=$(ca_active_id 2>/dev/null || true)
   if [ "$1" = "$active" ] && ca_store_present; then
     ca_store_read | jq -r '.claudeAiOauth.accessToken // empty'
-  else
-    ca_vault_get "$1" | jq -r '.claudeAiOauth.accessToken // empty'
+    return
   fi
+  record=$(ca_vault_get "$1") || { echo expired >&2; return 1; }
+  if ca_oauth_expired "$record"; then
+    # A stalled connection is tried once more; the lock is free in between.
+    until why=$(ca_oauth_renew_vault "$1" 2>&1 >/dev/null); do
+      attempt=$((attempt + 1))
+      if [ "$why" != unreachable ] || [ "$attempt" -ge 2 ]; then
+        case "$why" in invalid_grant | disabled | active) echo expired >&2 ;; *) echo "${why:-unreachable}" >&2 ;; esac
+        return 1
+      fi
+    done
+    record=$(ca_vault_get "$1") || { echo expired >&2; return 1; }
+  fi
+  printf '%s' "$record" | jq -r '.claudeAiOauth.accessToken // empty'
 }
 
 # ca_usage_refresh [--if-older-than N] [id ...]: ask the endpoint for each account
@@ -85,13 +104,18 @@ ca_usage_refresh() {
         '(($now - (.accounts[$id].fetchedAt // 0)) | tostring)')" -lt "$max_age" ]; then
       continue
     fi
-    token=$(ca_usage_token "$id") || token=""
-    if [ -z "$token" ]; then
-      printf 'expired\n' >"$dir/$id.err"
-      : >"$dir/$id.json"  # an empty answer, so the report below sees this account
-      continue
-    fi
-    (ca_usage_get "$token" >"$dir/$id.json" 2>"$dir/$id.err") &
+    # Each account on its own, so a renewal holds nobody else up. Renewals take
+    # the command lock one at a time, network call included, so one may queue.
+    (
+      # shellcheck disable=SC2034  # read by ca_lock (util.sh)
+      CA_LOCK_TRIES=300
+      if token=$(ca_usage_token "$id" 2>"$dir/$id.err") && [ -n "$token" ]; then
+        ca_usage_get "$token" >"$dir/$id.json" 2>"$dir/$id.err"
+      else
+        [ -s "$dir/$id.err" ] || printf 'expired\n' >"$dir/$id.err"
+        : >"$dir/$id.json"  # an empty answer, so the report below sees this account
+      fi
+    ) &
   done
   wait
 
@@ -106,7 +130,8 @@ ca_usage_refresh() {
     else
       status=$(head -n 1 "$dir/$id.err" 2>/dev/null)
       case "$status" in
-        expired) line="login expired — switch to it once, or /login again" ;;
+        expired) line="login expired — /login to it again, then click ＋ save" ;;
+        throttled) line="Anthropic is throttling this login's requests; trying again later" ;;
         unexpected) line="the endpoint answered in a shape claude-acct does not know" ;;
         *) line="could not be reached" ;;
       esac
@@ -128,6 +153,17 @@ ca_cmd_refresh() {  # refresh [account ...]
   [ -z "$problems" ] || printf '%s\n' "$problems" >&2
   ca_settings_poke
   ca_cmd_list
+}
+
+# claude-acct round auto <lock-dir> | round switch: the background work, as a
+# process of its own so that the lock it takes names a pid that lives as long as
+# the lock is held. Not in the usage text; nothing to call by hand.
+ca_cmd_round() {
+  case "${1:-}${2:+ x}" in
+    "auto x") ca_usage_round "$2" ;;
+    switch) ca_usage_refresh --if-older-than "$CA_USAGE_FRESH_SECONDS" >/dev/null 2>&1 || true ;;
+    *) ca_die "usage: claude-acct round auto <lock-dir> | round switch" ;;
+  esac
 }
 
 # ca_usage_round: one background round — the limits of every account (unless
@@ -167,7 +203,7 @@ ca_usage_maybe_refresh() {
   if [ "${CA_USAGE_SYNC:-0}" = 1 ]; then
     ca_usage_round "$lock"
   else
-    (ca_usage_round "$lock") >/dev/null 2>&1 </dev/null &
+    "$(ca_self)" round auto "$lock" >/dev/null 2>&1 </dev/null &
   fi
   return 0
 }

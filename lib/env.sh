@@ -23,6 +23,11 @@ ca_securestorage_dir() {  # the directory Claude Code keys credential storage to
 
 ca_credentials_file() { printf '%s/.credentials.json' "$(ca_securestorage_dir)"; }
 
+ca_self() { printf '%s/bin/claude-acct' "${CA_APP:?}"; }  # this very command, for background work
+# Requests say who they are. Anthropic's edge answers a nameless client (curl's own
+# User-Agent) with 429 whatever it asks, so this is not optional.
+ca_user_agent() { printf 'claude-acct/%s' "$(cat "${CA_APP:-.}/VERSION" 2>/dev/null || echo dev)"; }
+
 ca_keychain_service() {
   local suffix="" hash="" dir
   [ -z "${CLAUDE_CODE_CUSTOM_OAUTH_URL:-}" ] || suffix="-custom-oauth"

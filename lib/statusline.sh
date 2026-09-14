@@ -47,6 +47,8 @@ ca_style() {  # ca_style <active|off>
 # shellcheck disable=SC2016  # a jq program: the $names are jq variables, not shell
 CA_STATUSLINE_JQ='
   def dur: if . < 3600 then "\(. / 60 | floor)m" elif . < 86400 then "\(. / 3600 | floor)h" else "\(. / 86400 | floor)d" end;
+  # The same reset time as the session and the endpoint each round it: a second apart.
+  def near($a; $b): if $a == null or $b == null then $a == $b else (if $a > $b then $a - $b else $b - $a end) <= 5 end;
   # OSC 8 hyperlink: ESC ] 8 ; ; url BEL text ESC ] 8 ; ; BEL
   def link($url; $text): ([27] | implode) as $esc | ([7] | implode) as $bel
     | $esc + "]8;;" + $url + $bel + $text + $esc + "]8;;" + $bel;
@@ -59,8 +61,10 @@ CA_STATUSLINE_JQ='
          + (if $w.resets_at == null then "" else "↻\($w.resets_at - $now | dur)" end)
     else empty end;
   def limits($src):
-    [window("5h"; $src.five_hour), window("7d"; $src.seven_day)]
-    | if length > 0 then " " + join(" · ") else "" end;
+    if ($src | type) == "object" and ($src.fetchedAt | type) == "number" and ($now - $src.fetchedAt) > $stale_seconds
+    then " ?"   # last heard from too long ago to be true; Claude Code drops cached usage after an hour too
+    else [window("5h"; $src.five_hour), window("7d"; $src.seven_day)]
+         | if length > 0 then " " + join(" · ") else "" end end;
   def name($a; $short): if $short then (($a.label | .[0:3]) + "…") else $a.label end;
   # Both spellings of the row: plain to measure against the terminal, styled to print.
   # The whole segment — marker, name and limits — is one link, and for the active
@@ -84,22 +88,35 @@ CA_STATUSLINE_JQ='
      then "\($acct.accountUuid):\($acct.organizationUuid)" else null end) as $key
   | ([$idx.accounts[] | select(.key == $key) | .id] | .[0]) as $active
 
-  # The session only ever reports the active account s limits, and for a moment after
-  # a switch they are still the previous account s: exactly the numbers that account
-  # last reported. Only those count as leftovers; two accounts that genuinely report
-  # the same numbers are not confused for each other.
+  # The session only ever reports the active account s limits, and after a switch it
+  # keeps showing the previous account s numbers until its next response. Such
+  # leftovers are told apart by comparing them with what the previous account is
+  # known to have: the same numbers, or the same two reset times (its last numbers
+  # may have gone unrecorded, but its windows do not move). Reset times are
+  # rounded (minutes for 5h, the hour for 7d), so two accounts started close
+  # together can coincide; the new account s numbers then stay unrecorded until
+  # the windows part, and the row shows the endpoint s numbers meanwhile.
+  # The previous account is the one a switch left, or the one the last status line
+  # saw active: a /login by hand is a switch too.
   | ($s.rate_limits // null) as $lim
+  | ([$rl0.switch.from, $rl0.lastActive] | map(select(. != null and . != $active)) | unique) as $prevs
   | (if $active == null or ($lim | type) != "object" then {status: "none", entry: null}
      else
        "\($lim.five_hour.resets_at // "")|\($lim.five_hour.used_percentage // "")|\($lim.seven_day.resets_at // "")|\($lim.seven_day.used_percentage // "")" as $sig
-       | ($rl0.switch.from // null) as $from
-       | if $from != null and $from != $active and $sig == ($rl0.accounts[$from].lastSig // "")
+       | if any($prevs[]; ($rl0.accounts[.] // {}) as $prev
+              | $sig == ($prev.lastSig // "")
+                or (($prev.five_hour != null or $prev.seven_day != null)
+                    and near($lim.five_hour.resets_at // null; $prev.five_hour.resets_at // null)
+                    and near($lim.seven_day.resets_at // null; $prev.seven_day.resets_at // null)))
          then {status: "stale", entry: null}
          elif ($rl0.accounts[$active].lastSig // "") == $sig then {status: "live", entry: null}
-         else {status: "live", entry: {five_hour: ($lim.five_hour // null), seven_day: ($lim.seven_day // null),
-                                       observedAt: $now, fetchedAt: $now, source: "session", lastSig: $sig}}
+         else {status: "live",
+               entry: {five_hour: ($lim.five_hour // null), seven_day: ($lim.seven_day // null),
+                       observedAt: $now, fetchedAt: $now, source: "session", lastSig: $sig}}
          end
      end) as $obs
+  | (if $obs.entry != null or ($active != null and $active != $rl0.lastActive)
+     then {entry: $obs.entry, lastActive: (if $active != $rl0.lastActive then $active else null end)} else null end) as $patch
   | (if $obs.entry then ($rl0 | .accounts[$active] = ((.accounts[$active] // {}) + $obs.entry)) else $rl0 end) as $rlnow
   | (($now - ($rl0.auto.at // 0)) >= $auto_seconds) as $due
 
@@ -113,7 +130,7 @@ CA_STATUSLINE_JQ='
      elif $columns > 0 and (row($rows; false).plain | length) > ($columns - 2) then true
      else false end) as $short
 
-  | ($orig | @json), (if $due then "1" else "0" end), (if $obs.entry then ($obs.entry | tojson) else "-" end), ($active // ""),
+  | ($orig | @json), (if $due then "1" else "0" end), (if $patch then ($patch | tojson) else "-" end), ($active // ""),
     (if $key == null then empty else
        row($rows; $short).styled,
        ([link("\($base)/" + (if $short then "expand" else "collapse" end);
@@ -125,7 +142,7 @@ CA_STATUSLINE_JQ='
 '
 
 ca_cmd_statusline() {
-  local input now data out orig due entry active rows
+  local input now data out orig due patch active rows
   input=$(cat)
   now=$(date +%s)
   data=$(ca_data_dir)
@@ -140,10 +157,10 @@ ca_cmd_statusline() {
     else set -- "$@" --argjson "$name" "[$fallback]"; fi
   done
   out=$(jq -rn "$@" --arg session "$input" --argjson now "$now" --argjson columns "${COLUMNS:-0}" \
-    --argjson auto_seconds "$CA_USAGE_AUTO_SECONDS" \
+    --argjson auto_seconds "$CA_USAGE_AUTO_SECONDS" --argjson stale_seconds "$CA_RL_STALE_SECONDS" \
     --arg base "$CA_URL_BASE" --arg s_active "$(ca_style active)" --arg s_off "$(ca_style off)" \
     "$CA_STATUSLINE_JQ" 2>/dev/null) || return 0
-  { IFS= read -r orig; IFS= read -r due; IFS= read -r entry; IFS= read -r active; rows=$(cat); } <<EOF
+  { IFS= read -r orig; IFS= read -r due; IFS= read -r patch; IFS= read -r active; rows=$(cat); } <<EOF
 $out
 EOF
   if [ "$orig" != '""' ]; then
@@ -155,10 +172,11 @@ EOF
     fi
   fi
   [ -z "$rows" ] || printf '%s\n' "$rows"
-  if [ "$entry" != "-" ] && [ -n "$active" ] && printf '%s' "$entry" | jq -e . >/dev/null 2>&1; then
+  if [ "$patch" != "-" ] && [ -n "$active" ] && printf '%s' "$patch" | jq -e . >/dev/null 2>&1; then
     # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
-    ca_rl_update '.accounts[$id] = ((.accounts[$id] // {}) + $entry)' --arg id "$active" --argjson entry "$entry" \
-      >/dev/null 2>&1 || true
+    ca_rl_update '(if $p.entry then .accounts[$id] = ((.accounts[$id] // {}) + $p.entry) else . end)
+                  | (if $p.lastActive then .lastActive = $p.lastActive else . end)' \
+      --arg id "$active" --argjson p "$patch" >/dev/null 2>&1 || true
   fi
   # Keep the numbers current even while the user is idle waiting for a reset.
   [ "$due" != 1 ] || ca_usage_maybe_refresh

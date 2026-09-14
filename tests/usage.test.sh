@@ -258,3 +258,176 @@ test_turning_lookups_off_keeps_the_token_re_save() {
   assert_eq "$(grep -c '^curl url=' "$FAKE_LOG" || true)" "0"
   assert_eq "$(ca_lib ca_vault_get a1eeea2a | jq -r .claudeAiOauth.refreshToken)" "rt-bob2"
 }
+
+# The fake token endpoint answers renew_<refresh token>.json; the vault fixture s
+# tokens expire far in the future, so these tests expire them first.
+expire_vault() {  # expire_vault <id>
+  ca_lib ca_vault_get "$1" | jq -c '.claudeAiOauth.expiresAt = 1' | ca_lib ca_vault_put "$1"
+}
+renew_reply() {  # renew_reply <old refresh token> <new suffix>
+  mkdir -p "$T/curl"; export FAKE_CURL_DIR="$T/curl"
+  jq -n --arg s "$2" '{access_token: ("at-" + $s), refresh_token: ("rt-" + $s), expires_in: 28800,
+                       scope: "user:inference user:profile", token_type: "Bearer"}' >"$T/curl/renew_$1.json"
+}
+
+test_an_expired_saved_login_is_renewed_before_its_limits_are_asked_for() {
+  two_accounts
+  expire_vault 33084eab
+  renew_reply rt-alice alice-new
+  usage_reply at-alice-new 12 "$(iso 9000)" 30 "$(iso 302400)"
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  ca refresh >/dev/null 2>&1
+  local rec
+  rec=$(ca_lib ca_vault_get 33084eab)
+  assert_eq "$(printf '%s' "$rec" | jq -r .claudeAiOauth.accessToken)" "at-alice-new"
+  assert_eq "$(printf '%s' "$rec" | jq -r .claudeAiOauth.refreshToken)" "rt-alice-new"
+  [ "$(printf '%s' "$rec" | jq -r .claudeAiOauth.expiresAt)" -gt "$(( $(date +%s) * 1000 ))" ] || fail "expiresAt not moved forward"
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "12"
+  assert_contains "$(cat "$XDG_DATA_HOME/claude-acct/claude-acct.log")" "token renewed 33084eab"
+  # the new tokens were filed before the usage call used them
+  local renew_at use_at
+  renew_at=$(grep -n 'renew rt=rt-alice' "$FAKE_LOG" | head -1 | cut -d: -f1)
+  use_at=$(grep -n 'token=at-alice-new' "$FAKE_LOG" | head -1 | cut -d: -f1)
+  if [ -z "$renew_at" ] || [ -z "$use_at" ] || [ "$renew_at" -ge "$use_at" ]; then
+    fail "renewal ($renew_at) did not precede use ($use_at)"
+  fi
+}
+
+test_a_login_that_can_no_longer_be_renewed_is_reported_and_left_alone() {
+  two_accounts
+  expire_vault 33084eab          # no renew_ answer prepared: the endpoint says invalid_grant
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  assert_contains "$(ca refresh 2>&1 || true)" "alice@example.com: login expired"
+  assert_eq "$(ca_lib ca_vault_get 33084eab | jq -r .claudeAiOauth.refreshToken)" "rt-alice"
+}
+
+test_the_active_account_is_never_renewed_by_claude_acct() {
+  two_accounts
+  cc_store_get | jq -c '.claudeAiOauth.expiresAt = 1' | cc_store_put   # bob s live token looks expired
+  renew_reply rt-bob bob-new
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  usage_reply at-alice 12 "$(iso 9000)" 30 "$(iso 302400)"
+  ca refresh >/dev/null 2>&1
+  assert_not_contains "$(cat "$FAKE_LOG")" "renew rt=rt-bob"
+  assert_eq "$(live_rt)" "rt-bob"
+}
+
+test_renewal_can_be_turned_off() {
+  two_accounts
+  expire_vault 33084eab
+  renew_reply rt-alice alice-new
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  local out
+  out=$(CLAUDE_ACCT_TOKEN_REFRESH=0 ca refresh 2>&1 || true)
+  assert_contains "$out" "alice@example.com: login expired"
+  assert_not_contains "$(cat "$FAKE_LOG")" "renew rt="
+}
+
+test_the_refresh_token_never_reaches_the_process_list() {
+  two_accounts
+  expire_vault 33084eab
+  renew_reply rt-alice alice-new
+  usage_reply at-alice-new 12 "$(iso 9000)" 30 "$(iso 302400)"
+  ca refresh >/dev/null 2>&1
+  assert_contains "$(grep '^curl renew' "$FAKE_LOG")" "rt=rt-alice"
+  assert_not_contains "$(grep '^curl argv=' "$FAKE_LOG")" "rt-alice"
+}
+
+test_a_throttled_login_is_told_apart_from_an_unreachable_endpoint() {
+  two_accounts
+  usage_reply at-alice 12 "$(iso 9000)" 30 "$(iso 302400)" 429
+  assert_contains "$(ca refresh 2>&1 || true)" "alice@example.com: Anthropic is throttling"
+}
+
+test_numbers_older_than_an_hour_show_as_unknown() {
+  two_accounts
+  usage_reply at-alice 12 "$(iso 9000)" 30 "$(iso 302400)"
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  ca refresh >/dev/null
+  ca_lib ca_rl_update '.accounts["33084eab"].fetchedAt -= 3601' >/dev/null
+  local out
+  out=$(printf '{}' | ca statusline | strip_style)
+  assert_contains "$out" "alice@example.com ?"
+  assert_contains "$out" "● bob@example.com 5h 45%"
+}
+
+test_a_connection_that_stalls_once_is_tried_again() {
+  two_accounts
+  usage_reply at-alice 12 "$(iso 9000)" 30 "$(iso 302400)"
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  : >"$T/curl/at-alice.stall"
+  ca refresh >/dev/null 2>&1
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "12"
+  assert_eq "$(grep -c 'token=at-alice' "$FAKE_LOG" || true)" "2"
+  assert_eq "$(grep -c 'token=at-bob' "$FAKE_LOG" || true)" "1"
+}
+
+test_a_gateway_error_is_tried_once_more_then_reported() {
+  two_accounts
+  usage_reply at-alice 12 "$(iso 9000)" 30 "$(iso 302400)" 502
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  local out
+  out=$(ca refresh 2>&1 >/dev/null)
+  assert_contains "$out" "alice@example.com: could not be reached"
+  assert_eq "$(grep -c 'token=at-alice' "$FAKE_LOG" || true)" "2"
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["a1eeea2a"].five_hour.used_percentage')" "45"
+}
+
+test_a_stalled_renewal_is_tried_again() {
+  two_accounts
+  expire_vault 33084eab
+  renew_reply rt-alice alice-new
+  : >"$T/curl/renew_rt-alice.stall"
+  usage_reply at-alice-new 12 "$(iso 9000)" 30 "$(iso 302400)"
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  ca refresh >/dev/null 2>&1
+  assert_eq "$(ca_lib ca_vault_get 33084eab | jq -r .claudeAiOauth.accessToken)" "at-alice-new"
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "12"
+  assert_eq "$(grep -c 'renew rt=rt-alice' "$FAKE_LOG" || true)" "2"
+}
+
+test_the_round_command_does_the_background_work() {
+  two_accounts
+  usage_reply at-alice 12 "$(iso 9000)" 30 "$(iso 302400)"
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  local lock="$XDG_DATA_HOME/claude-acct/auto.lock"
+  mkdir -p "$lock"
+  CLAUDE_ACCT_AUTO_REFRESH=1 ca round auto "$lock"
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "12"
+  assert_fails test -d "$lock"
+  assert_fails ca round 2>/dev/null
+}
+
+test_a_throttled_renewal_is_left_alone_for_a_while() {
+  two_accounts
+  expire_vault 33084eab
+  renew_reply rt-alice alice-new
+  printf 429 >"$T/curl/renew_rt-alice.code"
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  local out
+  out=$(ca refresh 2>&1 >/dev/null)
+  assert_contains "$out" "alice@example.com: Anthropic is throttling"
+  assert_eq "$(grep -c 'renew rt=rt-alice' "$FAKE_LOG" || true)" "1"   # not tried again at once
+  # nor in the next round, even though the endpoint would answer now
+  rm "$T/curl/renew_rt-alice.code"
+  ca refresh >/dev/null 2>&1
+  assert_eq "$(grep -c 'renew rt=rt-alice' "$FAKE_LOG" || true)" "1"
+  # once the wait is over, it is
+  ca_lib ca_rl_update '.accounts["33084eab"].renewAfter = 1' >/dev/null
+  usage_reply at-alice-new 12 "$(iso 9000)" 30 "$(iso 302400)"
+  ca refresh >/dev/null 2>&1
+  assert_eq "$(grep -c 'renew rt=rt-alice' "$FAKE_LOG" || true)" "2"
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "12"
+}
+
+test_requests_say_who_they_are() {
+  # Anthropic s edge answers a nameless client with 429 whatever it asks
+  two_accounts
+  expire_vault 33084eab
+  renew_reply rt-alice alice-new
+  usage_reply at-alice-new 12 "$(iso 9000)" 30 "$(iso 302400)"
+  usage_reply at-bob 45 "$(iso 19800)" 60 "$(iso 388800)"
+  ca refresh >/dev/null 2>&1
+  assert_eq "$(grep -c '^curl ua=claude-acct/[0-9]' "$FAKE_LOG" || true)" "3"   # one renewal, two lookups
+  assert_eq "$(grep -c '^curl ua=' "$FAKE_LOG" || true)" "3"
+}

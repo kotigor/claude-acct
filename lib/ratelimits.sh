@@ -2,6 +2,9 @@
 # Last known rate limits per account, as written by the status line (session
 # numbers) and the usage refresh (endpoint numbers).
 
+# shellcheck disable=SC2034  # used by statusline.sh
+CA_RL_STALE_SECONDS=3600  # Claude Code itself treats cached usage older than this as unusable
+
 ca_rl_path() { printf '%s/ratelimits.json' "$(ca_data_dir)"; }
 
 ca_rl_read() {

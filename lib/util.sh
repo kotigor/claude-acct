@@ -48,6 +48,9 @@ ca_lock() {
   dir="$(ca_data_dir)/lock"
   until mkdir "$dir" 2>/dev/null; do
     owner=$(cat "$dir/pid" 2>/dev/null || true)
+    # Held by this very command already (a subshell of it): nothing to take, and
+    # nothing to release on the way out either.
+    [ "$owner" != "$$" ] || return 0
     if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
       rm -f "$dir/pid"
       rmdir "$dir" 2>/dev/null || true

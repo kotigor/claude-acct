@@ -65,3 +65,15 @@ test_only_the_owner_releases_the_lock() {
   [ -d "$dir" ] || fail "a process released a lock it did not own"
   rm -rf "$dir"
 }
+
+test_the_lock_is_reentrant_within_the_same_command() {
+  local out
+  # a subshell of the command holding the lock (a renewal inside a round, say) goes
+  # straight through, and leaving that subshell does not release the lock
+  out=$(bash -c 'set -euo pipefail; for f in "$0"/lib/*.sh; do . "$f"; done
+    ca_lock
+    ( CA_LOCK_TRIES=3; ca_lock; echo inner )
+    [ -d "$(ca_data_dir)/lock" ] && echo still-held' "$ROOT")
+  assert_eq "$out" "inner
+still-held"
+}

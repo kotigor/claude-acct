@@ -3,7 +3,10 @@
 # config on stdin (curl -K -) so the token stays out of the process list, so this
 # reads them from there. Answers from $FAKE_CURL_DIR/<bearer token>.json (body)
 # and .code (status, default 200); an unknown token gets 401.
-# FAKE_CURL_SLEEP delays the reply, to exercise timeouts and parallelism.
+# FAKE_CURL_SLEEP delays the reply, to exercise timeouts and parallelism. A
+# <token>.stall or renew_<refresh token>.stall file makes one call hang up the
+# way a connection that never came through does (exit 28), then goes away; a
+# renew_<refresh token>.code file makes the token endpoint answer that status.
 set -euo pipefail
 
 config=""
@@ -11,6 +14,28 @@ case " $* " in *" -K - "* | *" --config - "*) config=$(cat) ;; esac
 
 token=$(printf '%s\n' "$config" | sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p')
 url=$(printf '%s\n' "$config" | sed -n 's/^url = "\(.*\)"$/\1/p')
+data=$(printf '%s\n' "$config" | sed -n 's/^data = "\(.*\)"$/\1/p' | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g')
+ua=$(printf '%s\n' "$config" | sed -n 's/^header = "User-Agent: \(.*\)"$/\1/p')
+printf 'curl ua=%s\n' "$ua" >>"${FAKE_LOG:-/dev/null}"
+
+# The token endpoint: answers from $FAKE_CURL_DIR/renew_<refresh token>.json, else invalid_grant.
+case "$url" in
+  *"/v1/oauth/token")
+    rt=$(printf '%s' "$data" | jq -r '.refresh_token // empty' 2>/dev/null)
+    printf 'curl renew rt=%s grant=%s\n' "$rt" "$(printf '%s' "$data" | jq -r '.grant_type // "?"' 2>/dev/null)" >>"${FAKE_LOG:-/dev/null}"
+    if [ -n "$rt" ] && [ -f "${FAKE_CURL_DIR:-/nonexistent}/renew_$rt.stall" ]; then
+      rm -f "$FAKE_CURL_DIR/renew_$rt.stall"; exit 28
+    fi
+    if [ -n "$rt" ] && [ -f "${FAKE_CURL_DIR:-/nonexistent}/renew_$rt.code" ]; then
+      printf '{"error":{"type":"rate_limit_error","message":"Rate limited. Please try again later."}}\n%s\n' \
+        "$(cat "$FAKE_CURL_DIR/renew_$rt.code")"
+    elif [ -n "$rt" ] && [ -f "${FAKE_CURL_DIR:-/nonexistent}/renew_$rt.json" ]; then
+      cat "$FAKE_CURL_DIR/renew_$rt.json"; printf '\n200\n'
+    else
+      printf '{"error":"invalid_grant","error_description":"refresh token is invalid"}\n400\n'
+    fi
+    exit 0 ;;
+esac
 
 # argv is logged separately from the token, so a test can prove the token is not in it.
 printf 'curl argv=%s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
@@ -19,6 +44,9 @@ printf 'curl url=%s token=%s\n' "$url" "$token" >>"${FAKE_LOG:-/dev/null}"
 [ -z "${FAKE_CURL_SLEEP:-}" ] || sleep "$FAKE_CURL_SLEEP"
 
 dir=${FAKE_CURL_DIR:-/nonexistent}
+if [ -n "$token" ] && [ -f "$dir/$token.stall" ]; then
+  rm -f "$dir/$token.stall"; exit 28
+fi
 if [ -n "$token" ] && [ -f "$dir/$token.json" ]; then
   cat "$dir/$token.json"
   printf '\n%s\n' "$(cat "$dir/$token.code" 2>/dev/null || echo 200)"

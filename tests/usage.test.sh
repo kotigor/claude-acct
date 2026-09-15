@@ -149,7 +149,8 @@ test_the_status_line_does_not_wipe_what_the_endpoint_reported() {
   ca refresh >/dev/null
   local now
   now=$(date +%s)
-  jq -cn --argjson a 7 --argjson b "$((now + 9000))" --argjson c 8 --argjson d "$((now + 302400))" \
+  # bob s own windows: the same ones the endpoint reported for him
+  jq -cn --argjson a 7 --argjson b "$((now + 19800))" --argjson c 8 --argjson d "$((now + 388800))" \
     '{rate_limits: {five_hour: {used_percentage: $a, resets_at: $b}, seven_day: {used_percentage: $c, resets_at: $d}}}' |
     ca statusline >/dev/null
   local entry

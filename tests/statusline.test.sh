@@ -243,3 +243,58 @@ test_only_the_previous_account_s_last_numbers_count_as_leftovers() {
     ca statusline >/dev/null
   assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].five_hour.used_percentage')" "0"
 }
+
+seven_day_only() {  # seven_day_only <7d %> <7d resets_at>: a session that has no 5h window
+  jq -cn --argjson c "$1" --argjson d "$2" '{rate_limits: {seven_day: {used_percentage: $c, resets_at: $d}}}'
+}
+
+three_accounts() {  # alice, bob, carol; bob active
+  two_accounts
+  cc_login carol
+  ca save >/dev/null
+  ca use bob@example.com >/dev/null
+}
+
+test_leftovers_of_an_account_left_several_switches_ago_are_recognised() {
+  three_accounts
+  local now carol
+  now=$(date +%s)
+  carol=$(ca_lib ca_index_find carol@example.com)
+  session 5 $((now + 6600)) 44 $((now + 400000)) | ca statusline >/dev/null   # bob s own numbers
+  ca use alice@example.com >/dev/null
+  session 5 $((now + 6600)) 44 $((now + 400000)) | ca statusline >/dev/null   # no response since: still bob s
+  ca use carol@example.com >/dev/null
+  session 5 $((now + 6600)) 44 $((now + 400000)) | ca statusline >/dev/null   # and still bob s
+  assert_eq "$(ca_lib ca_rl_read | jq -r --arg id "$carol" '.accounts[$id].five_hour // "none"')" "none"
+}
+
+test_another_session_s_older_numbers_are_recognised_by_the_window_they_share() {
+  two_accounts
+  local now r5 r7
+  now=$(date +%s); r5=$((now + 6600)); r7=$((now + 400000))
+  # two open sessions: one last heard from bob before his 5h window started, the
+  # other just now, and the other one s numbers are the last recorded
+  seven_day_only 42 "$r7" | ca statusline >/dev/null
+  session 5 "$r5" 44 "$r7" | ca statusline >/dev/null
+  ca use alice@example.com >/dev/null
+  seven_day_only 42 "$r7" | ca statusline >/dev/null   # the first session, still bob s
+  assert_eq "$(ca_lib ca_rl_read | jq -r '.accounts["33084eab"].seven_day // "none"')" "none"
+}
+
+test_a_window_that_has_reset_since_does_not_hide_whose_leftovers_they_are() {
+  three_accounts
+  local now carol
+  now=$(date +%s)
+  carol=$(ca_lib ca_index_find carol@example.com)
+  # a session last heard from bob while his previous 5h window was running ...
+  session 70 $((now - 600)) 44 $((now + 400000)) | ca statusline >/dev/null
+  # ... and the endpoint has seen his new one since
+  # shellcheck disable=SC2016  # a jq filter: its $names are jq variables
+  ca_lib ca_rl_update '.accounts["a1eeea2a"] += {five_hour: {used_percentage: 3, resets_at: $r5}, fetchedAt: $now, source: "api"}' \
+    --argjson r5 $((now + 17400)) --argjson now "$now" >/dev/null
+  ca use alice@example.com >/dev/null
+  session 70 $((now - 600)) 44 $((now + 400000)) | ca statusline >/dev/null   # no response since: still bob s
+  ca use carol@example.com >/dev/null
+  session 70 $((now - 600)) 44 $((now + 400000)) | ca statusline >/dev/null   # and still bob s
+  assert_eq "$(ca_lib ca_rl_read | jq -r --arg id "$carol" '.accounts[$id].seven_day // "none"')" "none"
+}

@@ -55,7 +55,13 @@ ca_style() {  # ca_style <active|off>
 CA_STATUSLINE_JQ='
   def dur: if . < 3600 then "\(. / 60 | floor)m" elif . < 86400 then "\(. / 3600 | floor)h" else "\(. / 86400 | floor)d" end;
   # The same reset time as the session and the endpoint each round it: a second apart.
-  def near($a; $b): if $a == null or $b == null then $a == $b else (if $a > $b then $a - $b else $b - $a end) <= 5 end;
+  def near($a; $b): (if $a > $b then $a - $b else $b - $a end) <= 5;
+  # A window is known by its reset time, which does not move while it runs.
+  def running($w): ($w | type) == "object" and ($w.resets_at | type) == "number" and $w.resets_at > $now;
+  # At least one window runs on both sides, and every window that does resets at the same time.
+  def same_windows($a; $b):
+    [("five_hour", "seven_day") as $k | select(running($a[$k]) and running($b[$k])) | near($a[$k].resets_at; $b[$k].resets_at)]
+    | length > 0 and all;
   # OSC 8 hyperlink: ESC ] 8 ; ; url BEL text ESC ] 8 ; ; BEL
   def link($url; $text): ([27] | implode) as $esc | ([7] | implode) as $bel
     | $esc + "]8;;" + $url + $bel + $text + $esc + "]8;;" + $bel;
@@ -100,13 +106,15 @@ CA_STATUSLINE_JQ='
   | ([$idx.accounts[] | select(.key == $key) | .id] | .[0]) as $active
 
   # The session only ever reports the active account s limits, and after a switch it
-  # keeps showing the previous account s numbers until its next response. Such
-  # leftovers are told apart by comparing them with what the previous account is
-  # known to have: the same numbers, or the same two reset times (its last numbers
-  # may have gone unrecorded, but its windows do not move). Reset times are
-  # rounded (minutes for 5h, the hour for 7d), so two accounts started close
-  # together can coincide; the new account s numbers then stay unrecorded until
-  # the windows part, and the row shows the endpoint s numbers meanwhile.
+  # keeps showing the numbers of the account it last got a response for, which can
+  # be several switches back; another open session can show still older numbers of
+  # that account. Such leftovers are told apart by what the other accounts are known
+  # to have: the numbers the previous account last showed, or a window of any other
+  # account (its last numbers may have gone unrecorded, but its windows do not move).
+  # A window that has reset since tells nothing either way. Reset times are rounded
+  # (minutes for 5h, the hour for 7d), so two accounts started close together can
+  # coincide; the new account s numbers then stay unrecorded until the windows part,
+  # and the row shows the endpoint s numbers meanwhile.
   # The previous account is the one a switch left, or the one the last status line
   # saw active: a /login by hand is a switch too.
   | ($s.rate_limits // null) as $lim
@@ -114,11 +122,8 @@ CA_STATUSLINE_JQ='
   | (if $active == null or ($lim | type) != "object" then {status: "none", entry: null}
      else
        "\($lim.five_hour.resets_at // "")|\($lim.five_hour.used_percentage // "")|\($lim.seven_day.resets_at // "")|\($lim.seven_day.used_percentage // "")" as $sig
-       | if any($prevs[]; ($rl0.accounts[.] // {}) as $prev
-              | $sig == ($prev.lastSig // "")
-                or (($prev.five_hour != null or $prev.seven_day != null)
-                    and near($lim.five_hour.resets_at // null; $prev.five_hour.resets_at // null)
-                    and near($lim.seven_day.resets_at // null; $prev.seven_day.resets_at // null)))
+       | if any($prevs[]; $sig == ($rl0.accounts[.].lastSig // ""))
+            or any($rl0.accounts | to_entries[] | select(.key != $active); same_windows($lim; .value))
          then {status: "stale", entry: null}
          elif ($rl0.accounts[$active].lastSig // "") == $sig then {status: "live", entry: null}
          else {status: "live",
